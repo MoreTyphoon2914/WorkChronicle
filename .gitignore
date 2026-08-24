@@ -3,3 +3,16 @@ __pycache__/
 *.pyc
 config.json
 logs/
+bin/
+worktracker.exe
+*.test
+browser-extension/dist/
+validation/results/
+reports/
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.pfx
+*.p12

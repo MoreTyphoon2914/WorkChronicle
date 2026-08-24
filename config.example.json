@@ -1,0 +1,42 @@
+{
+  "server": "http://localhost:5600",
+  "window_bucket": "",
+  "afk_bucket": "",
+  "timezone": "Africa/Cairo",
+  "day_boundary": "04:00",
+  "work_targets": {
+    "daily_target_hours": 8,
+    "daily_standard_minimum_hours": 6,
+    "workdays_per_week": 5,
+    "overtime_rule": "WORKING_ABOVE_STANDARD_TARGET"
+  },
+  "afk_grace_minutes": 2,
+  "auto_end_after_minutes": 90,
+  "status_stale_seconds": 15,
+  "context_poll_seconds": 2,
+  "network_refresh_seconds": 60,
+  "network_stale_seconds": 180,
+  "http_timeout_seconds": 10,
+  "retry_max_seconds": 30,
+  "context_queue_size": 10000,
+  "task_name": "WorkTracker",
+  "browser_ingest": {
+    "enabled": true,
+    "port": 5601,
+    "max_body_bytes": 65536
+  },
+  "lock_apps": ["lockapp.exe"],
+  "lock_title_contains": ["windows default lock screen"],
+  "vlc": {
+    "url": "http://127.0.0.1:8080/requests/status.json",
+    "password": "REPLACE_IN_LOCAL_IGNORED_CONFIG"
+  },
+  "home_gateway_macs": ["REPLACE-IN-LOCAL-IGNORED-CONFIG"],
+  "office_gateway_macs": ["REPLACE-IN-LOCAL-IGNORED-CONFIG"],
+  "logging": {
+    "level": "info",
+    "file": "logs/worktracker.log",
+    "max_bytes": 5242880,
+    "max_backups": 3
+  }
+}
