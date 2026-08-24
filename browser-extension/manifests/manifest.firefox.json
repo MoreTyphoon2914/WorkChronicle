@@ -1,0 +1,25 @@
+{
+  "manifest_version": 2,
+  "name": "WorkTracker Browser Context",
+  "version": "1.0.0",
+  "description": "Sends tab and standard HTML media state to the local WorkTracker collector.",
+  "permissions": ["tabs", "http://127.0.0.1/*"],
+  "background": {
+    "scripts": ["src/core.js", "src/compat.js", "src/background.js"],
+    "persistent": true
+  },
+  "content_scripts": [
+    {
+      "matches": ["http://*/*", "https://*/*"],
+      "js": ["src/core.js", "src/compat.js", "src/content.js"],
+      "run_at": "document_start",
+      "all_frames": false
+    }
+  ],
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "worktracker-browser-context@local",
+      "strict_min_version": "109.0"
+    }
+  }
+}

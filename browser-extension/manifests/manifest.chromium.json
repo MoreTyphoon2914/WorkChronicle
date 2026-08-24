@@ -1,0 +1,19 @@
+{
+  "manifest_version": 3,
+  "name": "WorkTracker Browser Context",
+  "version": "1.0.0",
+  "description": "Sends tab and standard HTML media state to the local WorkTracker collector.",
+  "permissions": ["tabs"],
+  "host_permissions": ["http://127.0.0.1/*"],
+  "background": {
+    "service_worker": "src/background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["http://*/*", "https://*/*"],
+      "js": ["src/core.js", "src/compat.js", "src/content.js"],
+      "run_at": "document_start",
+      "all_frames": false
+    }
+  ]
+}
