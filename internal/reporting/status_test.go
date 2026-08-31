@@ -19,7 +19,7 @@ func TestStatusFromDayCarriesEvaluationAndCurrentEvidence(t *testing.T) {
 		Timeline: []model.Segment{{
 			Start: now.Add(-time.Minute), End: now, State: model.Working,
 			Location: model.Office, LocationEvidence: model.Confirmed,
-			ForegroundApp: "Code.exe", ForegroundTitle: "WorkTracker",
+			ForegroundApp: "Code.exe", ForegroundTitle: "WorkChronicle",
 			PassiveEvidence: map[string]model.PassiveEvidence{"vlc": {Detector: "vlc", State: "paused", Available: true}},
 			Health:          model.Healthy,
 		}},

@@ -3,7 +3,7 @@
 
 The harness launches browsers with disposable profiles, serves loopback-only
 test pages, drives tabs through CDP/WebDriver BiDi, and verifies persisted
-ActivityWatch events plus WorkTracker status output.
+ActivityWatch events plus WorkChronicle status output.
 """
 
 from __future__ import annotations
@@ -102,7 +102,7 @@ def make_wave(duration_seconds: int = 20) -> bytes:
 
 PAGE = """<!doctype html>
 <html><head><meta charset="utf-8"><title>{title}</title></head>
-<body><h1>WorkTracker Phase 3C test</h1>
+<body><h1>WorkChronicle Phase 3C test</h1>
 <script>
 (() => {{
   let media = null;

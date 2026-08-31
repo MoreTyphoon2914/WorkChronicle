@@ -52,7 +52,7 @@
     }).catch(function (error) {
       var now = Date.now();
       if (now - lastFailureLog >= 60000) {
-        console.warn("WorkTracker browser endpoint unavailable:", error.message);
+        console.warn("WorkChronicle browser endpoint unavailable:", error.message);
         lastFailureLog = now;
       }
     });

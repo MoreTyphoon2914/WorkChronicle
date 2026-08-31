@@ -157,7 +157,7 @@ func (u *nativeUI) Run(ctx context.Context, requestExit func()) error {
 		return fmt.Errorf("register tray window class: %w", callErr)
 	}
 	defer procUnregisterClassW.Call(uintptr(unsafe.Pointer(className)), instance)
-	title, _ := utf16Ptr("WorkTracker")
+	title, _ := utf16Ptr("WorkChronicle")
 	hwnd, _, callErr := procCreateWindowExW.Call(0, uintptr(unsafe.Pointer(className)), uintptr(unsafe.Pointer(title)), 0, 0, 0, 0, 0, 0, 0, instance, 0)
 	if hwnd == 0 {
 		return fmt.Errorf("create tray message window: %w", callErr)
@@ -179,7 +179,7 @@ func (u *nativeUI) Run(ctx context.Context, requestExit func()) error {
 	}
 	if !u.notify(nimAdd) {
 		procDestroyWindow.Call(hwnd)
-		return fmt.Errorf("add WorkTracker notification icon")
+		return fmt.Errorf("add WorkChronicle notification icon")
 	}
 	go func() {
 		<-ctx.Done()
@@ -251,7 +251,7 @@ func (u *nativeUI) notify(action uintptr) bool {
 		icon = u.icons[IconUntracked]
 	}
 	data := notifyIconData{Size: uint32(unsafe.Sizeof(notifyIconData{})), Window: hwnd, ID: 1, Flags: nifMessage | nifIcon | nifTip, CallbackMessage: wmTrayCallback, Icon: icon}
-	copyUTF16(data.Tip[:], "WorkTracker — "+view.State+" (click for status)")
+	copyUTF16(data.Tip[:], "WorkChronicle — "+view.State+" (click for status)")
 	result, _, _ := procShellNotifyIconW.Call(action, uintptr(unsafe.Pointer(&data)))
 	return result != 0
 }
@@ -261,7 +261,7 @@ func (u *nativeUI) showStatus() {
 	text := u.view.PopupText()
 	u.mu.RUnlock()
 	messageText, _ := utf16Ptr(text)
-	title, _ := utf16Ptr("WorkTracker Status")
+	title, _ := utf16Ptr("WorkChronicle Status")
 	procMessageBoxW.Call(u.window, uintptr(unsafe.Pointer(messageText)), uintptr(unsafe.Pointer(title)), mbOK|mbIconInfo)
 }
 
@@ -301,7 +301,7 @@ func (u *nativeUI) openFolder(path string) {
 
 func (u *nativeUI) showFolderError(message string) {
 	text, _ := utf16Ptr(message)
-	title, _ := utf16Ptr("WorkTracker")
+	title, _ := utf16Ptr("WorkChronicle")
 	procMessageBoxW.Call(u.window, uintptr(unsafe.Pointer(text)), uintptr(unsafe.Pointer(title)), mbOK)
 }
 

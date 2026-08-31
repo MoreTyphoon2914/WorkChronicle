@@ -39,7 +39,7 @@ func TestAllRunModesRejectAnExistingCollectorBeforeStartup(t *testing.T) {
 			if code != 2 {
 				t.Fatalf("second run exit code = %d, want 2", code)
 			}
-			if !strings.Contains(stderr.String(), "WorkSense collector is already running") {
+			if !strings.Contains(stderr.String(), "WorkChronicle collector is already running") {
 				t.Fatalf("missing clear conflict message: %q", stderr.String())
 			}
 			if stdout.Len() != 0 {

@@ -14,7 +14,7 @@ var kernel32 = syscall.NewLazyDLL("kernel32.dll")
 var createMutex = kernel32.NewProc("CreateMutexW")
 var releaseMutex = kernel32.NewProc("ReleaseMutex")
 
-var ErrCollectorAlreadyRunning = errors.New("WorkSense collector is already running; stop the existing instance before starting another")
+var ErrCollectorAlreadyRunning = errors.New("WorkChronicle collector is already running; stop the existing instance before starting another")
 
 type Mutex struct{ handle syscall.Handle }
 
@@ -24,7 +24,7 @@ func AcquireMutex(key string) (*Mutex, error) {
 	p, _ := syscall.UTF16PtrFromString(name)
 	h, _, callErr := createMutex.Call(0, 1, uintptr(unsafe.Pointer(p)))
 	if h == 0 {
-		return nil, fmt.Errorf("create WorkSense single-instance mutex: %w", callErr)
+		return nil, fmt.Errorf("create WorkChronicle single-instance mutex: %w", callErr)
 	}
 	// CreateMutexW reports ERROR_ALREADY_EXISTS through the call's captured
 	// last-error value while still returning a valid handle. Reading

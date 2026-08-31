@@ -255,7 +255,7 @@ func TestCapturedLiveOfficeCase(t *testing.T) {
 	reportTime := tm(14, 8)
 	start := tm(13, 0)
 	windows := []model.WindowEvent{
-		{Start: tm(14, 7).Add(47 * time.Second), End: tm(14, 7).Add(48*time.Second + 40*time.Millisecond), App: "Code.exe", Title: "WorkTracker"},
+		{Start: tm(14, 7).Add(47 * time.Second), End: tm(14, 7).Add(48*time.Second + 40*time.Millisecond), App: "Code.exe", Title: "WorkChronicle"},
 		{Start: tm(14, 7).Add(46 * time.Second), End: tm(14, 7).Add(46 * time.Second), App: "firefox.exe"},
 		{Start: tm(14, 7).Add(41 * time.Second), End: tm(14, 7).Add(45*time.Second + 160*time.Millisecond), App: "Code.exe"},
 		{Start: tm(14, 7).Add(40 * time.Second), End: tm(14, 7).Add(40 * time.Second), App: "Code.exe"},

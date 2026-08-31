@@ -14,7 +14,7 @@ $collectors = @(Get-CimInstance Win32_Process | Where-Object {
     $_.ExecutablePath -eq (Join-Path $repoRoot "bin\worktracker.exe")
 })
 if ($collectors.Count -ne 1) {
-    throw "Expected exactly one repository WorkTracker collector; found $($collectors.Count)"
+    throw "Expected exactly one repository WorkChronicle collector; found $($collectors.Count)"
 }
 
 & $python (Join-Path $extensionRoot "integration\run.py") --repo $repoRoot --collector-pid $collectors[0].ProcessId

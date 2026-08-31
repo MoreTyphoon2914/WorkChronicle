@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Live REMOTE validation recorder.
 
-This tool reads WorkTracker/ActivityWatch state and can control VLC through
+This tool reads WorkChronicle/ActivityWatch state and can control VLC through
 its configured loopback HTTP API. It never inserts ActivityWatch events,
 changes thresholds, or synthesizes user input.
 """
@@ -102,7 +102,7 @@ class Recorder:
             creationflags=flags,
         )
         if completed.returncode != 0:
-            raise RuntimeError(f"worktracker {command} failed: {completed.stderr.strip()}")
+            raise RuntimeError(f"WorkChronicle {command} failed: {completed.stderr.strip()}")
         return json.loads(completed.stdout)
 
     @staticmethod

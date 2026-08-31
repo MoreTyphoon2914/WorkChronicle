@@ -120,7 +120,7 @@ func runCollector(ctx context.Context, cfg config.Config, withTray bool, stdout,
 		return 2
 	}
 	defer closer.Close()
-	fmt.Fprintln(stdout, "WorkTracker collector running. Press Ctrl+C to stop.")
+	fmt.Fprintln(stdout, "WorkChronicle collector running. Press Ctrl+C to stop.")
 	collector := tracker.NewCollector(cfg, logger)
 	if !withTray {
 		err = collector.Run(ctx)
@@ -146,7 +146,7 @@ func runCollector(ctx context.Context, cfg config.Config, withTray bool, stdout,
 		ReportsDir: filepath.Join(filepath.Dir(cfg.ConfigPath), "reports"),
 		LogsDir:    filepath.Dir(cfg.Logging.File),
 	})
-	fmt.Fprintln(stdout, "WorkTracker tray enabled. Click the icon for current status.")
+	fmt.Fprintln(stdout, "WorkChronicle tray enabled. Click the icon for current status.")
 	trayErr := (tray.Controller{Provider: provider, UI: ui}).Run(runCtx, cancel)
 	cancel()
 	err = <-collectorDone
@@ -191,7 +191,7 @@ func currentSegment(r model.DayReport) *model.Segment {
 
 func printStatus(w io.Writer, cfg config.Config, r model.DayReport) {
 	status := reporting.StatusFromDay(cfg, r, time.Now())
-	fmt.Fprintln(w, "WORKTRACKER STATUS")
+	fmt.Fprintln(w, "WORKCHRONICLE STATUS")
 	fmt.Fprintln(w, "==================")
 	fmt.Fprintln(w, "State:     ", r.CurrentState)
 	if s := currentSegment(r); s != nil {
