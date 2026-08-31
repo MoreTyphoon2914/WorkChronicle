@@ -16,3 +16,4 @@ reports/
 *.key
 *.pfx
 *.p12
+Dockerfile
