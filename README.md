@@ -1,10 +1,10 @@
-# WorkTracker
+# WorkChronicle
 
-Windows work-time tracker backed by ActivityWatch. The Go implementation keeps the Python proof of concept in `src/` unchanged and reads both its legacy context events and the versioned Go context schema.
+Windows work-time Chronicle backed by ActivityWatch. The Go implementation keeps the Python proof of concept in `src/` unchanged and reads both its legacy context events and the versioned Go context schema.
 
 ## Configuration
 
-Copy `config.example.json` to the ignored `config.json` and replace local-only values there. Never commit passwords or physical-network fingerprints. Explicit window/AFK bucket IDs are optional; WorkTracker otherwise discovers a unique host-matching bucket.
+Copy `config.example.json` to the ignored `config.json` and replace local-only values there. Never commit passwords or physical-network fingerprints. Explicit window/AFK bucket IDs are optional; WorkChronicle otherwise discovers a unique host-matching bucket.
 
 The `work_targets` block configures fixed expectations: `daily_target_hours`, `daily_standard_minimum_hours`, `workdays_per_week`, and `overtime_rule`. Weekly values are derived by multiplying the daily values by the configured workdays. Older `target_hours` and `work_policy` keys remain read-compatible aliases. Work evaluations are calculated from classified `WORKING` totals at report time and are never stored in ActivityWatch.
 
@@ -16,24 +16,24 @@ JSON reports expose canonical `work_evaluation` and `week_to_date_evaluation` ob
 go test ./...
 go vet ./...
 go build ./...
-go build -o .\bin\worktracker.exe .\cmd\worktracker
+go build -o .\bin\workChronicle.exe .\cmd\workChronicle
 ```
 
 ## Commands
 
 ```powershell
-.\bin\worktracker.exe doctor --config .\config.json
-.\bin\worktracker.exe status --config .\config.json
-.\bin\worktracker.exe today --config .\config.json
-.\bin\worktracker.exe week --config .\config.json --json
-.\bin\worktracker.exe run --config .\config.json
+.\bin\workChronicle.exe doctor --config .\config.json
+.\bin\workChronicle.exe status --config .\config.json
+.\bin\workChronicle.exe today --config .\config.json
+.\bin\workChronicle.exe week --config .\config.json --json
+.\bin\workChronicle.exe run --config .\config.json
 ```
 
 On Windows, add `--tray` to the existing collector command to enable the
 optional system tray presentation in the same process:
 
 ```powershell
-.\bin\worktracker.exe run --config .\config.json --tray
+.\bin\workChronicle.exe run --config .\config.json --tray
 ```
 
 The normal command without `--tray` remains the console development mode. The
@@ -42,11 +42,11 @@ not start another collector. Left-click the icon for current status. The
 right-click menu opens the repository-local `reports` folder, the configured
 log folder, or exits the collector cleanly.
 
-Stop `src/context_watcher.py` before starting `worktracker run`; the two collectors must not write to the same context bucket concurrently.
+Stop `src/context_watcher.py` before starting `workChronicle run`; the two collectors must not write to the same context bucket concurrently.
 
 ## Browser context ingestion
 
-When enabled, `worktracker run` listens only on `127.0.0.1` at the configured `browser_ingest.port` (default `5601`). Browser observations are accepted at `POST /api/v1/browser/observations` and stored in the dedicated `aw-watcher-browser-context_<hostname>` ActivityWatch bucket. The endpoint requires `Content-Type: application/json` and schema version 1.
+When enabled, `workChronicle run` listens only on `127.0.0.1` at the configured `browser_ingest.port` (default `5601`). Browser observations are accepted at `POST /api/v1/browser/observations` and stored in the dedicated `aw-watcher-browser-context_<hostname>` ActivityWatch bucket. The endpoint requires `Content-Type: application/json` and schema version 1.
 
 The schema records `browser`, `tab_id`, `active`, `visible`, `url`, `domain`, `title`, `observed_at`, and a `media` object containing `present`, `state`, `type`, and `audible`. The extension in `browser-extension/` emits that raw schema; the Go backend remains responsible for deriving generic passive-work evidence.
 
@@ -65,7 +65,7 @@ The extension permissions are limited to `tabs`, HTTP/HTTPS page content-script 
 
 ### Load manually
 
-Start `worktracker run` first. Do not run the Python context collector concurrently.
+Start `workChronicle run` first. Do not run the Python context collector concurrently.
 
 - Firefox: open `about:debugging#/runtime/this-firefox`, choose **Load Temporary Add-on**, and select `browser-extension\dist\firefox\manifest.json`. Temporary add-ons must be reloaded after Firefox restarts unless the package is signed and installed through normal Firefox policy.
 - Chrome: open `chrome://extensions`, enable **Developer mode**, choose **Load unpacked**, and select `browser-extension\dist\chromium`.
