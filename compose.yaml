@@ -1,0 +1,37 @@
+name: workchronicle
+
+services:
+  core:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: workchronicle-core:local
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8080:8080"
+    environment:
+      WORKCHRONICLE_LISTEN_ADDR: "0.0.0.0:8080"
+      WORKCHRONICLE_DATA_DIR: "/data"
+      WORKCHRONICLE_AGENT_TOKEN_FILE: "/run/secrets/agent_token"
+      WORKCHRONICLE_TIMEZONE: "${WORKCHRONICLE_TIMEZONE:-Africa/Cairo}"
+      WORKCHRONICLE_DAY_BOUNDARY: "${WORKCHRONICLE_DAY_BOUNDARY:-04:00}"
+      WORKCHRONICLE_AFK_GRACE: "${WORKCHRONICLE_AFK_GRACE:-2m}"
+      WORKCHRONICLE_AUTO_END: "${WORKCHRONICLE_AUTO_END:-90m}"
+      WORKCHRONICLE_EVIDENCE_FRESHNESS: "${WORKCHRONICLE_EVIDENCE_FRESHNESS:-15s}"
+      WORKCHRONICLE_RETENTION: "${WORKCHRONICLE_RETENTION:-840h}"
+      WORKCHRONICLE_AGENT_STALE: "${WORKCHRONICLE_AGENT_STALE:-30s}"
+      WORKCHRONICLE_BROWSER_ACTIVE_FRESHNESS: "${WORKCHRONICLE_BROWSER_ACTIVE_FRESHNESS:-30s}"
+      WORKCHRONICLE_DAILY_MINIMUM: "${WORKCHRONICLE_DAILY_MINIMUM:-6h}"
+      WORKCHRONICLE_DAILY_TARGET: "${WORKCHRONICLE_DAILY_TARGET:-8h}"
+      WORKCHRONICLE_WORKDAYS_PER_WEEK: "${WORKCHRONICLE_WORKDAYS_PER_WEEK:-5}"
+    volumes:
+      - workchronicle-data:/data
+    secrets:
+      - agent_token
+
+volumes:
+  workchronicle-data:
+
+secrets:
+  agent_token:
+    file: ${WORKCHRONICLE_AGENT_TOKEN_FILE:-./secrets/agent-token.txt}

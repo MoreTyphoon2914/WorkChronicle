@@ -20,6 +20,10 @@ func (s *Service) Status(ctx context.Context, now time.Time) (model.StatusReport
 
 // StatusFromDay projects a classified daily report into current status.
 func StatusFromDay(_ config.Config, report model.DayReport, now time.Time) model.StatusReport {
+	return StatusFromDayReport(report, now)
+}
+
+func StatusFromDayReport(report model.DayReport, now time.Time) model.StatusReport {
 	remaining := max(0, report.WorkEvaluation.StandardTargetRemainingSeconds)
 	status := model.StatusReport{
 		WorkState:               report.CurrentState,

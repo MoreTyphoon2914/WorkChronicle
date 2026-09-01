@@ -12,27 +12,112 @@ JSON reports expose canonical `work_evaluation` and `week_to_date_evaluation` ob
 
 ## Build and checks
 
-```powershell
+```bash
 go test ./...
 go vet ./...
 go build ./...
-go build -o .\bin\worktracker.exe .\cmd\worktracker
+go build -o ./bin/worktracker.exe ./cmd/worktracker
 ```
 
 ## Commands
 
-```powershell
-.\bin\worktracker.exe doctor --config .\config.json
-.\bin\worktracker.exe status --config .\config.json
-.\bin\worktracker.exe today --config .\config.json
-.\bin\worktracker.exe week --config .\config.json --json
-.\bin\worktracker.exe week --config .\config.json --json-v2
-.\bin\worktracker.exe run --config .\config.json
+```bash
+./bin/worktracker.exe doctor --config ./config.json
+./bin/worktracker.exe status --config ./config.json
+./bin/worktracker.exe today --config ./config.json
+./bin/worktracker.exe week --config ./config.json --json
+./bin/worktracker.exe week --config ./config.json --json-v2
+./bin/worktracker.exe run --config ./config.json
 ```
 
 `week --json` retains the original top-level day array for compatibility.
 `week --json-v2` returns the versioned weekly summary object with period totals,
 the average denominator, weekly evaluation, and the same detailed daily data.
+
+## Docker Core demo
+
+The authoritative WorkChronicle classification and reporting application can
+run in Docker. A small Windows Host Agent remains native because ActivityWatch,
+interactive foreground/lock state, physical Wi-Fi, VLC, and the browser
+extension's loopback receiver belong to the signed-in Windows session.
+
+The Agent sends normalized facts to Core. It does not assign
+`WORKING`/`BREAK`/`UNTRACKED` and does not evaluate work targets. Core persists
+the facts under `/data`, derives evidence, classifies the timeline, evaluates
+targets, and exposes reports.
+
+From Git Bash, create the local shared secret and build/start Core:
+
+```bash
+go run ./cmd/workchronicle-core generate-token ./secrets/agent-token.txt
+docker compose config
+docker compose build
+docker compose up -d
+docker compose ps
+docker compose logs -f core
+```
+
+The `-d` flag means detached: containers run without occupying the terminal. It
+does not control persistence or volumes.
+
+Stop the existing `worktracker run` process and the Python context collector;
+the Host Agent deliberately uses the same single-instance identity and the
+same browser loopback port. Build and start the Agent in a normal Windows
+terminal:
+
+```powershell
+go build -o .\bin\workchronicle-agent.exe .\cmd\workchronicle-agent
+.\bin\workchronicle-agent.exe --config .\config.json `
+  --core-url http://127.0.0.1:8080 `
+  --token-file .\secrets\agent-token.txt
+```
+
+Open the dashboard at <http://127.0.0.1:8080/>. From Git Bash, inspect the
+Docker-owned APIs with:
+
+```bash
+curl http://127.0.0.1:8080/health
+curl http://127.0.0.1:8080/api/v1/status
+curl http://127.0.0.1:8080/api/v1/reports/today
+curl http://127.0.0.1:8080/api/v1/reports/week
+```
+
+`/health` retains the aggregate browser observation count and also reports
+Firefox, Chrome, and Edge integration status independently. “Connected” means a
+heartbeat from that extension family was seen within
+`WORKCHRONICLE_BROWSER_ACTIVE_FRESHNESS` (30 seconds by default); it does not
+claim that every browser process on the machine is open.
+
+The observation endpoint is `POST /api/v1/observations`, requires the shared
+Bearer token, and accepts schema-V1 batches containing window, AFK, raw legacy
+context, host network/app, and raw browser observations. Compose publishes Core
+only on `127.0.0.1:8080`; the token is mounted as a secret file and is never
+baked into the image.
+
+The current networking path is:
+
+```text
+Browser extensions -> 127.0.0.1:5601 -> Windows Host Agent
+ActivityWatch / VLC / Windows session sources -> Windows Host Agent
+Windows Host Agent -> authenticated HTTP -> 127.0.0.1:8080
+                   -> Docker published port -> Core container port 8080
+Dashboard / curl -> 127.0.0.1:8080 -> Docker Core
+```
+
+Inside the container, `WORKCHRONICLE_LISTEN_ADDR=0.0.0.0:8080` allows Core to
+receive traffic arriving through Docker's virtual network. Compose publishes
+that container port only as `127.0.0.1:8080:8080`, so it is not exposed on the
+Windows LAN interface.
+
+`docker compose down` preserves the named `workchronicle-data` volume. After
+`docker compose up -d`, reports are reconstructed from the persisted Core
+state. `docker compose stop`, `start`, and `restart` manage the existing
+container. `docker compose down` removes containers and the Compose network but
+preserves the named volume. **Do not run `docker compose down -v` unless you
+intend to delete the persistent WorkChronicle demo history.**
+
+See [docs/BUILDING.md](docs/BUILDING.md) for the Dockerfile, Compose, clean-build,
+and deployment walkthrough.
 
 On Windows, add `--tray` to the existing collector command to enable the
 optional system tray presentation in the same process:
@@ -73,23 +158,36 @@ The extension permissions are limited to `tabs`, HTTP/HTTPS page content-script 
 
 ### Load manually
 
-Start `worktracker run` first. Do not run the Python context collector concurrently.
+Start `workchronicle-agent.exe` first for the Docker architecture. Do not run
+the legacy native or Python collectors concurrently.
 
 - Firefox: open `about:debugging#/runtime/this-firefox`, choose **Load Temporary Add-on**, and select `browser-extension\dist\firefox\manifest.json`. Temporary add-ons must be reloaded after Firefox restarts unless the package is signed and installed through normal Firefox policy.
 - Chrome: open `chrome://extensions`, enable **Developer mode**, choose **Load unpacked**, and select `browser-extension\dist\chromium`.
 - Edge: open `edge://extensions`, enable **Developer mode**, choose **Load unpacked**, and select `browser-extension\dist\chromium`.
 
+Firefox temporary add-ons do not survive a Firefox restart. Chrome and Edge
+normally retain unpacked development extensions, subject to enterprise browser
+policy. Production distribution should use signed/published packages or managed
+enterprise deployment rather than developer loading.
+
 The extension sends meaningful changes immediately and heartbeats active tabs and tabs containing media every five seconds. Background playing media stays represented even when its tab is inactive or its page is hidden. Navigation and tab closure emit terminal no-media observations when prior tab state is known.
 
 ### Automated browser integration tests
 
-With exactly one Go collector running and no Python collector, build the packages and run the isolated-profile integration suite:
+With exactly one Host Agent running, Docker Core healthy, and no legacy/Python
+collector, build the packages and run the isolated-profile integration suite:
 
 ```powershell
 .\browser-extension\build.ps1
 .\browser-extension\integration\run.ps1
 ```
 
-The suite uses loopback-only test pages and temporary headless browser profiles. It never installs the extension into a normal browser profile. Chrome and Edge load the unpacked Manifest V3 directory; Firefox installs the generated package temporarily through its loopback WebDriver BiDi test session. The suite queries the dedicated ActivityWatch browser bucket, validates current `status` evidence, and briefly restarts the existing console collector to verify endpoint failure/recovery. It leaves one Go collector running afterward.
+The suite uses loopback-only test pages and temporary browser profiles. It never
+installs the extension into a normal browser profile. Chrome and Edge load the
+unpacked Manifest V3 directory; Firefox installs the generated package
+temporarily through its loopback WebDriver BiDi test session. The suite queries
+the dedicated ActivityWatch browser bucket, validates Docker Core `status`
+evidence, and briefly restarts the Host Agent to verify endpoint
+failure/recovery. It leaves one Host Agent running afterward.
 
 `install` and `uninstall` manage a per-user Task Scheduler entry. Installation fails without bypassing Windows or company policy if task registration is blocked. Do not install the task until live console validation is complete.
