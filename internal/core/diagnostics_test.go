@@ -5,10 +5,28 @@ import (
 	"time"
 
 	"worktracker/internal/browsercontext"
+	"worktracker/internal/coreprotocol"
 )
 
 func browserObservation(family, tab string, at time.Time) browsercontext.Observation {
 	return browsercontext.Observation{SchemaVersion: 1, Browser: family, TabID: tab, ObservedAt: at}
+}
+
+func TestAcquisitionHealthUsesLastObservationNotCounts(t *testing.T) {
+	now := time.Date(2026, 9, 1, 10, 0, 0, 0, time.UTC)
+	fresh := now.Add(-5 * time.Second)
+	stale := now.Add(-31 * time.Second)
+	got := acquisitionHealth(&coreprotocol.AcquisitionDiagnostics{Mode: "shadow",
+		ActivityWatch:    coreprotocol.SourceHealth{Enabled: true, Connected: true, LastObservation: &fresh},
+		NativeForeground: coreprotocol.SourceHealth{Enabled: true, Connected: true, LastObservation: &stale},
+		NativeAFK:        coreprotocol.SourceHealth{Enabled: true, Connected: false, Message: "input unavailable"},
+	}, now, 30*time.Second)
+	if !got.ActivityWatch.Connected || got.NativeForeground.Connected || got.NativeForeground.Message != "last observation is stale" || got.NativeAFK.Connected {
+		t.Fatalf("acquisition freshness projection=%#v", got)
+	}
+	if acquisitionHealthy(got) || !acquisitionHealthy(nil) {
+		t.Fatal("aggregate acquisition health did not preserve degraded and legacy behavior")
+	}
 }
 
 func TestBrowserHealthCountsFamiliesNotTabs(t *testing.T) {

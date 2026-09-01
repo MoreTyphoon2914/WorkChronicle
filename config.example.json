@@ -25,6 +25,12 @@
     "port": 5601,
     "max_body_bytes": 65536
   },
+  "host_acquisition": {
+    "mode": "activitywatch",
+    "native_poll_seconds": 2,
+    "native_afk_threshold_seconds": 180,
+    "parity_tolerance_seconds": 5
+  },
   "lock_apps": ["lockapp.exe"],
   "lock_title_contains": ["windows default lock screen"],
   "vlc": {

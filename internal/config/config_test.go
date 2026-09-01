@@ -57,6 +57,30 @@ func TestCurrentShapeGetsDefaults(t *testing.T) {
 	if c.WorkTargets.DailyStandardMinimumHours != 6 || c.WorkTargets.DailyTargetHours != 8 || c.WorkTargets.WorkdaysPerWeek != 5 {
 		t.Fatalf("work-target defaults missing: %#v", c.WorkTargets)
 	}
+	if c.AcquisitionMode() != "activitywatch" || c.NativeAFKThreshold() != 3*time.Minute {
+		t.Fatalf("safe ActivityWatch acquisition defaults missing: %#v", c.HostAcquisition)
+	}
+}
+
+func TestHostAcquisitionModesAndTimingValidation(t *testing.T) {
+	c := defaults()
+	c.VLC.URL = "http://127.0.0.1/vlc"
+	for _, mode := range []string{"activitywatch", "shadow", "native", " SHADOW "} {
+		c.HostAcquisition.Mode = mode
+		if err := c.Validate(); err != nil {
+			t.Fatalf("mode %q rejected: %v", mode, err)
+		}
+	}
+	c.HostAcquisition.Mode = "automatic"
+	if err := c.Validate(); err == nil {
+		t.Fatal("unknown acquisition mode accepted")
+	}
+	c = defaults()
+	c.VLC.URL = "http://127.0.0.1/vlc"
+	c.HostAcquisition.NativePollSeconds = 0
+	if err := c.Validate(); err == nil {
+		t.Fatal("zero native poll interval accepted")
+	}
 }
 
 func TestWorkTargetsConfigDerivesWeeklyValuesFromDailySettings(t *testing.T) {

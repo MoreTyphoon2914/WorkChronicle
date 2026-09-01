@@ -61,7 +61,7 @@ func (e Engine) day(start, end time.Time, live bool) (model.DayReport, error) {
 	state := e.Store.Snapshot()
 	windows := make([]model.WindowEvent, 0, len(state.Windows))
 	for _, item := range state.Windows {
-		windows = append(windows, model.WindowEvent{Start: item.Start, End: item.End, App: item.Executable, Title: item.Title})
+		windows = append(windows, model.WindowEvent{Start: item.Start, End: item.End, App: item.Executable, Title: item.Title, Locked: item.Locked})
 	}
 	afks := make([]model.AFKEvent, 0, len(state.AFK))
 	for _, item := range state.AFK {

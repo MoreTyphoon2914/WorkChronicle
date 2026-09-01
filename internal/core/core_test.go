@@ -3,6 +3,7 @@ package core
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -105,6 +106,24 @@ func TestStorePersistsAcrossRecreationAndWeekSumsDays(t *testing.T) {
 	}
 }
 
+func TestStoreLoadsPreSourcePersistenceAsActivityWatch(t *testing.T) {
+	config := testConfig(t)
+	now := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
+	legacy := fmt.Sprintf(`{"schema_version":1,"last_ingest":%q,"windows":[{"start":%q,"end":%q,"executable":"Code.exe"}],"afk":[{"start":%q,"end":%q,"status":"not-afk"}],"stored_context":[],"host_context":[],"browser":[]}`,
+		now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano))
+	if err := os.WriteFile(filepath.Join(config.DataDir, "state.json"), []byte(legacy), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	store, err := OpenStore(config.DataDir, config.Retention)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot := store.Snapshot()
+	if snapshot.Windows[0].Source != coreprotocol.SourceActivityWatch || snapshot.AFK[0].Source != coreprotocol.SourceActivityWatch {
+		t.Fatalf("legacy persisted source provenance was not normalized: %#v", snapshot)
+	}
+}
+
 func TestObservationEndpointRequiresTokenAndServesRealReports(t *testing.T) {
 	config := testConfig(t)
 	store, _ := OpenStore(config.DataDir, config.Retention)
@@ -160,7 +179,7 @@ func TestDashboardIsServedWithoutRawTitleProjection(t *testing.T) {
 	if !bytes.Contains([]byte(body), []byte("WorkChronicle")) || bytes.Contains([]byte(body), []byte("foreground.title")) {
 		t.Fatalf("dashboard branding/privacy projection is invalid")
 	}
-	for _, marker := range []string{"Session time = Working + Break + Untracked.", "Credited working today", "First work", "Last work", "Report through", "Total session", "Remaining working target"} {
+	for _, marker := range []string{"Session time = Working + Break + Untracked.", "Credited working today", "First work", "Last work", "Report through", "Total session", "Remaining working target", "Host acquisition", "Shadow observations are diagnostic only"} {
 		if !bytes.Contains([]byte(body), []byte(marker)) {
 			t.Fatalf("dashboard omitted presentation marker %q", marker)
 		}
@@ -201,5 +220,142 @@ func TestHealthPreservesAggregateBrowserCountAndFamilyDiagnostics(t *testing.T) 
 	}
 	if health.ObservationCounts["browser"] != 3 || health.Browsers.ActiveCount != 2 || health.Browsers.Sources["firefox"].Observations != 2 {
 		t.Fatalf("health diagnostics=%#v", health)
+	}
+}
+
+func TestShadowObservationsPersistButNeverInfluenceClassification(t *testing.T) {
+	config := testConfig(t)
+	store, _ := OpenStore(config.DataDir, config.Retention)
+	now := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
+	start := now.Add(-10 * time.Minute)
+	batch := coreprotocol.Batch{
+		SchemaVersion: 1, AgentID: "host", SentAt: now,
+		Windows:       []coreprotocol.WindowObservation{{Start: start, End: now, Executable: "Code.exe", Source: coreprotocol.SourceActivityWatch}},
+		AFK:           []coreprotocol.AFKObservation{{Start: start, End: now, Status: "not-afk", Source: coreprotocol.SourceActivityWatch}},
+		ShadowWindows: []coreprotocol.WindowObservation{{Start: start, End: now, Executable: "LockApp.exe", Locked: true, Source: coreprotocol.SourceNativeWindows}},
+		ShadowAFK:     []coreprotocol.AFKObservation{{Start: start, End: now, Status: "afk", Source: coreprotocol.SourceNativeWindows}},
+		Sessions:      []coreprotocol.SessionObservation{{ObservedAt: now, Locked: true, Source: coreprotocol.SourceNativeWindows}},
+		Acquisition:   &coreprotocol.AcquisitionDiagnostics{Mode: "shadow"},
+	}
+	if err := batch.NormalizeAndValidate(); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Ingest(batch); err != nil {
+		t.Fatal(err)
+	}
+	status, err := (Engine{Config: config, Store: store}).Status(now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status.WorkState != model.Working || status.Foreground.Executable != "Code.exe" {
+		t.Fatalf("shadow facts affected authoritative classification: %#v", status)
+	}
+	reopened, err := OpenStore(config.DataDir, config.Retention)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot := reopened.Snapshot()
+	if len(snapshot.ShadowWindows) != 1 || len(snapshot.ShadowAFK) != 1 || len(snapshot.Sessions) != 1 || snapshot.Acquisition == nil || snapshot.Acquisition.Mode != "shadow" {
+		t.Fatalf("shadow diagnostics were not persisted: %#v", snapshot)
+	}
+}
+
+func TestNativeModeClassifiesWithoutActivityWatchAndSourceCanSwitch(t *testing.T) {
+	config := testConfig(t)
+	store, _ := OpenStore(config.DataDir, config.Retention)
+	now := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
+	batch := coreprotocol.Batch{
+		SchemaVersion: 1, AgentID: "host", SentAt: now,
+		Windows: []coreprotocol.WindowObservation{
+			{Start: now.Add(-time.Minute), End: now.Add(-20 * time.Second), Executable: "legacy.exe", Source: coreprotocol.SourceActivityWatch},
+			{Start: now.Add(-10 * time.Second), End: now, Executable: "Code.exe", Source: coreprotocol.SourceNativeWindows},
+		},
+		AFK:         []coreprotocol.AFKObservation{{Start: now.Add(-10 * time.Second), End: now, Status: "not-afk", Source: coreprotocol.SourceNativeWindows}},
+		Acquisition: &coreprotocol.AcquisitionDiagnostics{Mode: "native"},
+	}
+	if err := batch.NormalizeAndValidate(); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Ingest(batch); err != nil {
+		t.Fatal(err)
+	}
+	status, err := (Engine{Config: config, Store: store}).Status(now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status.WorkState != model.Working || status.Foreground.Executable != "Code.exe" {
+		t.Fatalf("native facts were not authoritative after source switch: %#v", status)
+	}
+}
+
+func TestNativeEvidenceBecomesUntrackedAfterSharedFreshness(t *testing.T) {
+	config := testConfig(t)
+	store, _ := OpenStore(config.DataDir, config.Retention)
+	now := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
+	ended := now.Add(-config.EvidenceFreshness - time.Second)
+	batch := coreprotocol.Batch{
+		SchemaVersion: 1, AgentID: "host", SentAt: now,
+		Windows: []coreprotocol.WindowObservation{{Start: ended, End: ended, Executable: "Code.exe", Source: coreprotocol.SourceNativeWindows}},
+		AFK:     []coreprotocol.AFKObservation{{Start: ended, End: ended, Status: "not-afk", Source: coreprotocol.SourceNativeWindows}},
+	}
+	if err := batch.NormalizeAndValidate(); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Ingest(batch); err != nil {
+		t.Fatal(err)
+	}
+	status, err := (Engine{Config: config, Store: store}).Status(now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status.WorkState != model.Untracked || status.Foreground.Executable != "" {
+		t.Fatalf("stale native facts remained current: %#v", status)
+	}
+}
+
+func TestHealthExposesAcquisitionComponentsWithoutRawTitles(t *testing.T) {
+	config := testConfig(t)
+	store, _ := OpenStore(config.DataDir, config.Retention)
+	now := time.Now().UTC()
+	last := now.Add(-time.Second)
+	batch := coreprotocol.Batch{SchemaVersion: 1, AgentID: "host", SentAt: now,
+		ShadowWindows: []coreprotocol.WindowObservation{{Start: now, End: now, Executable: "browser.exe", Title: "https://example.test/?session_id=opaque-fixture", Source: coreprotocol.SourceNativeWindows}},
+		Acquisition: &coreprotocol.AcquisitionDiagnostics{Mode: "shadow",
+			ActivityWatch:    coreprotocol.SourceHealth{Enabled: true, Connected: true, LastObservation: &last},
+			NativeForeground: coreprotocol.SourceHealth{Enabled: true, Connected: true, LastObservation: &last},
+		},
+	}
+	if err := batch.NormalizeAndValidate(); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Ingest(batch); err != nil {
+		t.Fatal(err)
+	}
+	server, _ := NewServer(config, store)
+	response := httptest.NewRecorder()
+	server.HTTPServer().Handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/health", nil))
+	if bytes.Contains(response.Body.Bytes(), []byte("session_id=opaque-fixture")) || !bytes.Contains(response.Body.Bytes(), []byte(`"host_acquisition"`)) {
+		t.Fatalf("health projection leaked a title or omitted acquisition: %s", response.Body.String())
+	}
+}
+
+func TestTransientAcquisitionFailureRetainsLastSuccessfulTimestamp(t *testing.T) {
+	config := testConfig(t)
+	store, _ := OpenStore(config.DataDir, config.Retention)
+	now := time.Now().UTC()
+	last := now.Add(-time.Second)
+	first := coreprotocol.Batch{SchemaVersion: 1, AgentID: "host", SentAt: now,
+		Acquisition: &coreprotocol.AcquisitionDiagnostics{Mode: "shadow", NativeAFK: coreprotocol.SourceHealth{Enabled: true, Connected: true, LastObservation: &last}}}
+	second := coreprotocol.Batch{SchemaVersion: 1, AgentID: "host", SentAt: now.Add(time.Second),
+		Acquisition: &coreprotocol.AcquisitionDiagnostics{Mode: "shadow", NativeAFK: coreprotocol.SourceHealth{Enabled: true, Connected: false, Message: "temporary failure"}}}
+	if err := store.Ingest(first); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Ingest(second); err != nil {
+		t.Fatal(err)
+	}
+	health := store.Snapshot().Acquisition.NativeAFK
+	if health.Connected || health.LastObservation == nil || !health.LastObservation.Equal(last) || health.Message != "temporary failure" {
+		t.Fatalf("transient failure diagnostics=%#v", health)
 	}
 }

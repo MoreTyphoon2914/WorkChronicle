@@ -122,6 +122,57 @@ The Agent deliberately shares the legacy collector's single-instance identity
 and browser receiver port. It collects and normalizes facts but never assigns a
 work state or evaluates targets.
 
+Foreground/AFK acquisition defaults to ActivityWatch. To perform parity
+validation, add this non-secret block to the ignored local `config.json`:
+
+```json
+"host_acquisition": {
+  "mode": "shadow",
+  "native_poll_seconds": 2,
+  "native_afk_threshold_seconds": 180,
+  "parity_tolerance_seconds": 5
+}
+```
+
+In `shadow`, ActivityWatch remains the only classification authority. Native
+Windows observations are persisted separately and appear only in `/health` and
+the dashboard's Host acquisition diagnostics. `native` is an explicit cutover
+mode that can run foreground/AFK/session acquisition without ActivityWatch; it
+is deliberately not the default.
+
+### Native watcher live-validation checklist
+
+Record `/health` and `/api/v1/status` timestamps before and after each action.
+Never run the legacy collector beside the Host Agent.
+
+1. Set `mode` to `shadow`, start Core and one Agent, and confirm all four Host
+   acquisition rows are connected. Confirm comparison summaries contain no
+   titles or URLs.
+2. At home/REMOTE, record normal input, stop input past the configured native
+   AFK threshold, resume input, lock, and unlock. Then repeat AFK with browser
+   video playing. ActivityWatch must remain authoritative throughout.
+3. At OFFICE, record normal use, ordinary AFK while unlocked, lock, and unlock.
+   Existing Core rules must continue to produce OFFICE work while unlocked and
+   immediate BREAK while locked.
+4. During both locations, switch rapidly among applications. Compare normalized
+   executable/AFK/lock outcomes within `parity_tolerance_seconds`; exact event
+   start/end equality is not required.
+5. Stop/start the Agent, restart Core, and sleep/resume Windows. Confirm gaps are
+   not bridged as observed time, persisted shadow history survives Core restart,
+   and component timestamps recover.
+6. Stop ActivityWatch temporarily while still in `shadow`. Confirm native rows
+   continue updating independently while authoritative status becomes stale or
+   UNTRACKED rather than silently using shadow facts.
+7. Only after recording acceptable parity, explicitly test `native` mode with
+   ActivityWatch stopped. Repeat REMOTE and OFFICE input/AFK/lock cases and
+   confirm browser/VLC evidence remains independent.
+
+For each case record the ActivityWatch and native last-observation timestamps,
+comparison flags, status state/location/foreground executable, and the measured
+transition-time difference. Risks to resolve before default cutover include
+machine-specific secure-desktop behavior, idle-threshold mismatch, sleep/resume
+gaps, and foreground process access denied by protected applications.
+
 ## Container lifecycle and persistence
 
 ```bash

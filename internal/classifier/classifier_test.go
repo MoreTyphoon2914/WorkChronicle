@@ -75,6 +75,16 @@ func TestForegroundSeparateFromBackgroundVLC(t *testing.T) {
 	}
 }
 
+func TestExplicitNativeLockEvidenceUsesExistingLockRule(t *testing.T) {
+	start, end := tm(9, 0), tm(9, 10)
+	w := window(start, end, "unrelated.exe")
+	w.Locked = true
+	got := Build([]model.WindowEvent{w}, []model.AFKEvent{afk(start, end, "not-afk")}, []model.ContextEvent{contextEvent(start, end, model.Office, model.Confirmed, "")}, start, end, options())
+	if len(got) != 1 || got[0].State != model.Break {
+		t.Fatalf("explicit lock did not remain authoritative: %#v", got)
+	}
+}
+
 func TestClassifierConsumesGenericMultiplePassiveEvidence(t *testing.T) {
 	start, end := tm(9, 0), tm(9, 10)
 	context := model.ContextEvent{

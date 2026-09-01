@@ -17,6 +17,7 @@ import (
 	"worktracker/internal/coreclient"
 	"worktracker/internal/coreprotocol"
 	"worktracker/internal/location"
+	"worktracker/internal/nativewatcher"
 )
 
 type Buckets struct{ Window, AFK, Context, Browser string }
@@ -25,6 +26,7 @@ type Agent struct {
 	Config   config.Config
 	Core     *coreclient.Client
 	AW       *activitywatch.Client
+	Native   *nativewatcher.Watcher
 	Location *location.Detector
 	Apps     []appstate.Detector
 	Logger   *slog.Logger
@@ -34,9 +36,11 @@ func New(cfg config.Config, client *coreclient.Client, logger *slog.Logger) *Age
 	if logger == nil {
 		logger = slog.Default()
 	}
+	native, _ := nativewatcher.New(nativewatcher.WindowsReader{}, cfg.NativeAFKThreshold(), max(3*cfg.NativePollInterval(), 10*time.Second))
 	return &Agent{
 		Config: cfg, Core: client,
 		AW:       activitywatch.New(cfg.Server, cfg.HTTPTimeout(), time.Duration(cfg.RetryMaxSeconds*float64(time.Second))),
+		Native:   native,
 		Location: location.New(location.PowerShellRunner{}, cfg.OfficeGatewayMACs, cfg.HomeGatewayMACs, cfg.NetworkStale()),
 		Apps:     []appstate.Detector{&appstate.VLCDetector{URL: cfg.VLC.URL, Password: cfg.VLC.Password, Client: &http.Client{Timeout: cfg.HTTPTimeout()}}},
 		Logger:   logger,
@@ -47,21 +51,28 @@ func (a *Agent) Run(ctx context.Context) error {
 	if a.Core == nil {
 		return fmt.Errorf("Core client is required")
 	}
+	mode := a.Config.AcquisitionMode()
+	if (mode == "shadow" || mode == "native") && a.Native == nil {
+		return fmt.Errorf("native Windows acquisition is required in %s mode", mode)
+	}
 	hostname, err := os.Hostname()
 	if err != nil {
 		return err
 	}
-	buckets, err := a.resolveBuckets(ctx, hostname)
-	if err != nil {
-		return fmt.Errorf("resolve ActivityWatch buckets: %w", err)
-	}
-	browserBucket, err := a.ensureBrowserBucket(ctx, hostname, buckets.Browser)
-	if err != nil {
-		return err
-	}
-	buckets.Browser = browserBucket
 
-	browserErrors, shutdownBrowser, err := a.startBrowserReceiver(ctx, hostname, browserBucket)
+	var buckets Buckets
+	if usesActivityWatch(mode) {
+		buckets, err = a.resolveBuckets(ctx, hostname)
+		if err != nil {
+			a.Logger.Warn("ActivityWatch discovery degraded", "error", err)
+		} else if browserBucket, bucketErr := a.ensureBrowserBucket(ctx, hostname, buckets.Browser); bucketErr != nil {
+			a.Logger.Warn("ActivityWatch browser compatibility unavailable", "error", bucketErr)
+		} else {
+			buckets.Browser = browserBucket
+		}
+	}
+
+	browserErrors, shutdownBrowser, err := a.startBrowserReceiver(ctx, hostname, buckets.Browser, usesActivityWatch(mode))
 	if err != nil {
 		return err
 	}
@@ -75,12 +86,16 @@ func (a *Agent) Run(ctx context.Context) error {
 	dayStart, _, _ := a.Config.ReportingPeriod(now)
 	weekday := (int(dayStart.Weekday()) + 6) % 7
 	queryStart := dayStart.AddDate(0, 0, -weekday)
-	if err := a.acquireAndSend(ctx, hostname, buckets, queryStart, now, locationResult); err != nil {
-		a.Logger.Warn("initial observation forwarding failed", "error", err)
+	if sendErr := a.acquireAndSend(ctx, hostname, &buckets, queryStart, now, locationResult); sendErr != nil {
+		a.Logger.Warn("initial observation forwarding failed", "error", sendErr)
 	}
 	lastQuery := now
 
-	poll := time.NewTicker(a.Config.PollInterval())
+	interval := a.Config.PollInterval()
+	if mode != "activitywatch" && a.Config.NativePollInterval() < interval {
+		interval = a.Config.NativePollInterval()
+	}
+	poll := time.NewTicker(interval)
 	defer poll.Stop()
 	networkTick := time.NewTicker(a.Config.NetworkRefresh())
 	defer networkTick.Stop()
@@ -88,9 +103,9 @@ func (a *Agent) Run(ctx context.Context) error {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case err := <-browserErrors:
-			if err != nil {
-				a.Logger.Error("browser receiver stopped", "error", err)
+		case browserErr := <-browserErrors:
+			if browserErr != nil {
+				a.Logger.Error("browser receiver stopped", "error", browserErr)
 			}
 			browserErrors = nil
 		case tick := <-networkTick.C:
@@ -101,8 +116,8 @@ func (a *Agent) Run(ctx context.Context) error {
 		case tick := <-poll.C:
 			lookback := max(2*a.Config.StatusStale(), time.Minute)
 			start := lastQuery.Add(-lookback)
-			if err := a.acquireAndSend(ctx, hostname, buckets, start, tick.UTC(), locationResult); err != nil {
-				a.Logger.Warn("observation forwarding failed", "error", err)
+			if sendErr := a.acquireAndSend(ctx, hostname, &buckets, start, tick.UTC(), locationResult); sendErr != nil {
+				a.Logger.Warn("observation forwarding failed", "error", sendErr)
 			} else {
 				lastQuery = tick.UTC()
 			}
@@ -110,37 +125,106 @@ func (a *Agent) Run(ctx context.Context) error {
 	}
 }
 
-func (a *Agent) acquireAndSend(ctx context.Context, hostname string, buckets Buckets, start, end time.Time, network location.Result) error {
+func usesActivityWatch(mode string) bool { return mode == "activitywatch" || mode == "shadow" }
+
+func (a *Agent) acquireAndSend(ctx context.Context, hostname string, buckets *Buckets, start, end time.Time, network location.Result) error {
+	mode := a.Config.AcquisitionMode()
+	batch := coreprotocol.Batch{SchemaVersion: coreprotocol.SchemaVersion, AgentID: hostname, SentAt: end}
+	diagnostics := &coreprotocol.AcquisitionDiagnostics{Mode: mode}
+	diagnostics.ActivityWatch.Enabled = usesActivityWatch(mode)
+	diagnostics.NativeForeground.Enabled = mode == "shadow" || mode == "native"
+	diagnostics.NativeAFK.Enabled = diagnostics.NativeForeground.Enabled
+	diagnostics.NativeSession.Enabled = diagnostics.NativeForeground.Enabled
+
+	var awErr error
+	if usesActivityWatch(mode) {
+		if buckets.Window == "" || buckets.AFK == "" {
+			*buckets, awErr = a.resolveBuckets(ctx, hostname)
+		}
+		if awErr == nil {
+			awErr = a.appendActivityWatch(ctx, &batch, *buckets, start, end)
+		}
+		if awErr != nil {
+			diagnostics.ActivityWatch.Message = "unavailable: " + awErr.Error()
+		} else {
+			diagnostics.ActivityWatch.Connected = true
+			diagnostics.ActivityWatch.LastObservation = latestAuthoritativeObservation(batch.Windows, batch.AFK)
+		}
+	}
+
+	var nativeResult nativewatcher.Result
+	if mode == "shadow" || mode == "native" {
+		nativeResult = a.Native.Observe(ctx, end)
+		applyComponent(&diagnostics.NativeForeground, nativeResult.Foreground)
+		applyComponent(&diagnostics.NativeAFK, nativeResult.Input)
+		applyComponent(&diagnostics.NativeSession, nativeResult.SessionAPI)
+		if nativeResult.Session != nil {
+			batch.Sessions = append(batch.Sessions, *nativeResult.Session)
+		}
+		if mode == "native" {
+			if nativeResult.Window != nil {
+				batch.Windows = append(batch.Windows, *nativeResult.Window)
+			}
+			if nativeResult.AFK != nil {
+				batch.AFK = append(batch.AFK, *nativeResult.AFK)
+			}
+		} else {
+			if nativeResult.Window != nil {
+				batch.ShadowWindows = append(batch.ShadowWindows, *nativeResult.Window)
+			}
+			if nativeResult.AFK != nil {
+				batch.ShadowAFK = append(batch.ShadowAFK, *nativeResult.AFK)
+			}
+			diagnostics.Comparison = compareSources(batch.Windows, batch.AFK, nativeResult, end, a.Config.ParityTolerance(), a.Config.LockApps, a.Config.LockTitleContains)
+		}
+	}
+	batch.Acquisition = diagnostics
+	a.appendHostContext(ctx, &batch, end, network)
+	if err := batch.NormalizeAndValidate(); err != nil {
+		return fmt.Errorf("normalize observations: %w", err)
+	}
+	if err := a.Core.Send(ctx, batch); err != nil {
+		return err
+	}
+	if awErr != nil {
+		a.Logger.Warn("ActivityWatch acquisition degraded", "error", awErr)
+	}
+	return nil
+}
+
+func (a *Agent) appendActivityWatch(ctx context.Context, batch *coreprotocol.Batch, buckets Buckets, start, end time.Time) error {
 	query, err := a.AW.Query(ctx, buckets.Window, buckets.AFK, buckets.Context, buckets.Browser, start, end)
 	if err != nil {
 		return fmt.Errorf("query ActivityWatch: %w", err)
 	}
-	batch := coreprotocol.Batch{SchemaVersion: coreprotocol.SchemaVersion, AgentID: hostname, SentAt: end}
 	for _, event := range query.Windows {
 		executable, _ := event.Data["app"].(string)
 		if strings.TrimSpace(executable) == "" {
 			continue
 		}
 		title, _ := event.Data["title"].(string)
-		batch.Windows = append(batch.Windows, coreprotocol.WindowObservation{Start: event.Timestamp, End: eventEnd(event), Executable: executable, Title: title})
+		batch.Windows = append(batch.Windows, coreprotocol.WindowObservation{Start: event.Timestamp, End: eventEnd(event), Executable: executable, Title: title, Source: coreprotocol.SourceActivityWatch})
 	}
 	for _, event := range query.AFK {
 		status, _ := event.Data["status"].(string)
 		if strings.TrimSpace(status) == "" {
 			continue
 		}
-		batch.AFK = append(batch.AFK, coreprotocol.AFKObservation{Start: event.Timestamp, End: eventEnd(event), Status: status})
+		batch.AFK = append(batch.AFK, coreprotocol.AFKObservation{Start: event.Timestamp, End: eventEnd(event), Status: status, Source: coreprotocol.SourceActivityWatch})
 	}
 	for _, event := range query.Context {
 		batch.StoredContext = append(batch.StoredContext, coreprotocol.StoredContextObservation{Start: event.Timestamp, End: eventEnd(event), Data: event.Data})
 	}
 	for _, event := range query.Browser {
-		observation, err := browsercontext.DecodeStored(event.Data)
-		if err == nil {
+		observation, decodeErr := browsercontext.DecodeStored(event.Data)
+		if decodeErr == nil {
 			batch.Browser = append(batch.Browser, observation)
 		}
 	}
+	return nil
+}
 
+func (a *Agent) appendHostContext(ctx context.Context, batch *coreprotocol.Batch, end time.Time, network location.Result) {
 	apps := make(map[string]coreprotocol.AppObservation, len(a.Apps))
 	for _, detector := range a.Apps {
 		observation, observeErr := detector.Observe(ctx)
@@ -151,10 +235,32 @@ func (a *Agent) acquireAndSend(ctx context.Context, hostname string, buckets Buc
 		apps[detector.ID()] = coreprotocol.AppObservation{SourceID: detector.ID(), State: observation.State, Available: observation.Available, ObservedAt: observation.ObservedAt}
 	}
 	batch.HostContext = []coreprotocol.HostContextObservation{{Start: end, End: end, Location: network.Location, LocationEvidence: network.Evidence, Health: network.Health, Apps: apps}}
-	if err := batch.NormalizeAndValidate(); err != nil {
-		return fmt.Errorf("normalize observations: %w", err)
+}
+
+func applyComponent(target *coreprotocol.SourceHealth, result nativewatcher.ComponentResult) {
+	target.Connected = result.Connected
+	target.LastObservation = result.LastObservation
+	if result.Error != nil {
+		target.Message = result.Error.Error()
 	}
-	return a.Core.Send(ctx, batch)
+}
+
+func latestAuthoritativeObservation(windows []coreprotocol.WindowObservation, afk []coreprotocol.AFKObservation) *time.Time {
+	var latest time.Time
+	for _, item := range windows {
+		if item.End.After(latest) {
+			latest = item.End
+		}
+	}
+	for _, item := range afk {
+		if item.End.After(latest) {
+			latest = item.End
+		}
+	}
+	if latest.IsZero() {
+		return nil
+	}
+	return &latest
 }
 
 func (a *Agent) resolveBuckets(ctx context.Context, hostname string) (Buckets, error) {
@@ -170,11 +276,7 @@ func (a *Agent) resolveBuckets(ctx context.Context, hostname string) (Buckets, e
 	if err != nil {
 		return Buckets{}, err
 	}
-	return Buckets{
-		Window: window, AFK: afk,
-		Context: existingBucket(all, "aw-watcher-work-context_"+hostname),
-		Browser: existingBucket(all, "aw-watcher-browser-context_"+hostname),
-	}, nil
+	return Buckets{Window: window, AFK: afk, Context: existingBucket(all, "aw-watcher-work-context_"+hostname), Browser: existingBucket(all, "aw-watcher-browser-context_"+hostname)}, nil
 }
 
 func existingBucket(all map[string]activitywatch.Bucket, expected string) string {
@@ -197,12 +299,15 @@ func (a *Agent) ensureBrowserBucket(ctx context.Context, hostname, existing stri
 	return id, nil
 }
 
-func (a *Agent) startBrowserReceiver(ctx context.Context, hostname, bucket string) (<-chan error, func(), error) {
+func (a *Agent) startBrowserReceiver(ctx context.Context, hostname, bucket string, mirrorAW bool) (<-chan error, func(), error) {
 	listener, err := browsercontext.ListenLoopback(a.Config.BrowserIngest.Port)
 	if err != nil {
 		return nil, nil, fmt.Errorf("listen for browser context: %w", err)
 	}
-	store := browserForwardStore{core: a.Core, aw: a.AW, bucket: bucket, agentID: hostname, logger: a.Logger}
+	store := browserForwardStore{core: a.Core, bucket: bucket, agentID: hostname, logger: a.Logger}
+	if mirrorAW && bucket != "" {
+		store.aw = a.AW
+	}
 	server := browsercontext.NewServer(store, a.Config.BrowserIngest.MaxBodyBytes)
 	errors := make(chan error, 1)
 	go func() { errors <- server.Serve(listener) }()
@@ -216,11 +321,10 @@ func (a *Agent) startBrowserReceiver(ctx context.Context, hostname, bucket strin
 }
 
 type browserForwardStore struct {
-	core    *coreclient.Client
-	aw      *activitywatch.Client
-	bucket  string
-	agentID string
-	logger  *slog.Logger
+	core            *coreclient.Client
+	aw              *activitywatch.Client
+	bucket, agentID string
+	logger          *slog.Logger
 }
 
 func (s browserForwardStore) Save(ctx context.Context, observation browsercontext.Observation) error {
@@ -228,11 +332,13 @@ func (s browserForwardStore) Save(ctx context.Context, observation browsercontex
 	if err := s.core.Send(ctx, batch); err != nil {
 		return err
 	}
-	b, _ := json.Marshal(observation)
-	var data map[string]any
-	_ = json.Unmarshal(b, &data)
-	if err := s.aw.InsertEvents(ctx, s.bucket, []activitywatch.Event{{Timestamp: observation.ObservedAt.UTC(), Data: data}}); err != nil {
-		s.logger.Warn("ActivityWatch browser compatibility mirror failed")
+	if s.aw != nil && s.bucket != "" {
+		b, _ := json.Marshal(observation)
+		var data map[string]any
+		_ = json.Unmarshal(b, &data)
+		if err := s.aw.InsertEvents(ctx, s.bucket, []activitywatch.Event{{Timestamp: observation.ObservedAt.UTC(), Data: data}}); err != nil {
+			s.logger.Warn("ActivityWatch browser compatibility mirror failed")
+		}
 	}
 	return nil
 }

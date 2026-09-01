@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"worktracker/internal/browsercontext"
+	"worktracker/internal/coreprotocol"
 )
 
 var knownBrowserFamilies = []string{"firefox", "chrome", "edge"}
@@ -13,6 +14,42 @@ type BrowserSourceHealth struct {
 	Active       bool       `json:"active"`
 	LastSeen     *time.Time `json:"last_seen"`
 	Observations int        `json:"observations"`
+}
+
+func acquisitionHealth(input *coreprotocol.AcquisitionDiagnostics, now time.Time, freshness time.Duration) *coreprotocol.AcquisitionDiagnostics {
+	if input == nil {
+		return nil
+	}
+	result := *input
+	markStale := func(source *coreprotocol.SourceHealth) {
+		if !source.Enabled || source.LastObservation == nil || !source.Connected {
+			return
+		}
+		age := now.UTC().Sub(source.LastObservation.UTC())
+		if age > freshness || age < 0 {
+			source.Connected = false
+			if source.Message == "" {
+				source.Message = "last observation is stale"
+			}
+		}
+	}
+	markStale(&result.ActivityWatch)
+	markStale(&result.NativeForeground)
+	markStale(&result.NativeAFK)
+	markStale(&result.NativeSession)
+	return &result
+}
+
+func acquisitionHealthy(value *coreprotocol.AcquisitionDiagnostics) bool {
+	if value == nil {
+		return true // Backward-compatible agents predate component diagnostics.
+	}
+	for _, source := range []coreprotocol.SourceHealth{value.ActivityWatch, value.NativeForeground, value.NativeAFK, value.NativeSession} {
+		if source.Enabled && !source.Connected {
+			return false
+		}
+	}
+	return true
 }
 
 type BrowserHealth struct {

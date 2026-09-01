@@ -12,6 +12,11 @@ import (
 
 const SchemaVersion = 1
 
+const (
+	SourceActivityWatch = "activitywatch"
+	SourceNativeWindows = "native_windows"
+)
+
 // WindowObservation and AFKObservation are normalized host facts. They carry
 // no WorkChronicle classification decision.
 type WindowObservation struct {
@@ -19,12 +24,47 @@ type WindowObservation struct {
 	End        time.Time `json:"end"`
 	Executable string    `json:"executable"`
 	Title      string    `json:"title,omitempty"`
+	Source     string    `json:"source,omitempty"`
+	Locked     bool      `json:"locked,omitempty"`
 }
 
 type AFKObservation struct {
 	Start  time.Time `json:"start"`
 	End    time.Time `json:"end"`
 	Status string    `json:"status"`
+	Source string    `json:"source,omitempty"`
+}
+
+type SessionObservation struct {
+	ObservedAt time.Time `json:"observed_at"`
+	Locked     bool      `json:"locked"`
+	Source     string    `json:"source"`
+}
+
+type SourceHealth struct {
+	Enabled         bool       `json:"enabled"`
+	Connected       bool       `json:"connected"`
+	LastObservation *time.Time `json:"last_observation,omitempty"`
+	Message         string     `json:"message,omitempty"`
+}
+
+type ParityComparison struct {
+	ComparedAt       time.Time `json:"compared_at"`
+	ToleranceSeconds float64   `json:"tolerance_seconds"`
+	ForegroundMatch  bool      `json:"foreground_match"`
+	AFKMatch         bool      `json:"afk_match"`
+	SessionMatch     bool      `json:"session_match"`
+	Comparable       bool      `json:"comparable"`
+	Summary          string    `json:"summary,omitempty"`
+}
+
+type AcquisitionDiagnostics struct {
+	Mode             string            `json:"mode"`
+	ActivityWatch    SourceHealth      `json:"activitywatch"`
+	NativeForeground SourceHealth      `json:"native_foreground"`
+	NativeAFK        SourceHealth      `json:"native_afk"`
+	NativeSession    SourceHealth      `json:"native_session"`
+	Comparison       *ParityComparison `json:"comparison,omitempty"`
 }
 
 // StoredContextObservation preserves existing ActivityWatch V0/V1 payloads so
@@ -62,6 +102,10 @@ type Batch struct {
 	StoredContext []StoredContextObservation   `json:"stored_context,omitempty"`
 	HostContext   []HostContextObservation     `json:"host_context,omitempty"`
 	Browser       []browsercontext.Observation `json:"browser,omitempty"`
+	ShadowWindows []WindowObservation          `json:"shadow_windows,omitempty"`
+	ShadowAFK     []AFKObservation             `json:"shadow_afk,omitempty"`
+	Sessions      []SessionObservation         `json:"sessions,omitempty"`
+	Acquisition   *AcquisitionDiagnostics      `json:"acquisition,omitempty"`
 }
 
 func (b *Batch) NormalizeAndValidate() error {
@@ -75,14 +119,51 @@ func (b *Batch) NormalizeAndValidate() error {
 	if b.SentAt.IsZero() {
 		return errors.New("sent_at is required")
 	}
-	for _, item := range b.Windows {
-		if item.Start.IsZero() || item.End.Before(item.Start) || strings.TrimSpace(item.Executable) == "" {
+	for i := range b.Windows {
+		item := &b.Windows[i]
+		if item.Source == "" {
+			item.Source = SourceActivityWatch
+		}
+		if item.Start.IsZero() || item.End.Before(item.Start) || strings.TrimSpace(item.Executable) == "" || !validSource(item.Source) {
 			return errors.New("window observations require valid times and executable")
 		}
 	}
-	for _, item := range b.AFK {
-		if item.Start.IsZero() || item.End.Before(item.Start) || strings.TrimSpace(item.Status) == "" {
+	for i := range b.AFK {
+		item := &b.AFK[i]
+		if item.Source == "" {
+			item.Source = SourceActivityWatch
+		}
+		if item.Start.IsZero() || item.End.Before(item.Start) || strings.TrimSpace(item.Status) == "" || !validSource(item.Source) {
 			return errors.New("AFK observations require valid times and status")
+		}
+	}
+	for i := range b.ShadowWindows {
+		item := &b.ShadowWindows[i]
+		if item.Source == "" {
+			item.Source = SourceNativeWindows
+		}
+		if item.Start.IsZero() || item.End.Before(item.Start) || strings.TrimSpace(item.Executable) == "" || item.Source != SourceNativeWindows {
+			return errors.New("shadow window observations require valid times, executable, and source")
+		}
+	}
+	for i := range b.ShadowAFK {
+		item := &b.ShadowAFK[i]
+		if item.Source == "" {
+			item.Source = SourceNativeWindows
+		}
+		if item.Start.IsZero() || item.End.Before(item.Start) || strings.TrimSpace(item.Status) == "" || item.Source != SourceNativeWindows {
+			return errors.New("shadow AFK observations require valid times, status, and source")
+		}
+	}
+	for _, item := range b.Sessions {
+		if item.ObservedAt.IsZero() || item.Source != SourceNativeWindows {
+			return errors.New("session observations require observed_at and source")
+		}
+	}
+	if b.Acquisition != nil {
+		mode := strings.ToLower(strings.TrimSpace(b.Acquisition.Mode))
+		if mode != "activitywatch" && mode != "shadow" && mode != "native" {
+			return errors.New("acquisition mode must be activitywatch, shadow, or native")
 		}
 	}
 	for _, item := range b.StoredContext {
@@ -109,4 +190,8 @@ func (b *Batch) NormalizeAndValidate() error {
 		}
 	}
 	return nil
+}
+
+func validSource(source string) bool {
+	return source == SourceActivityWatch || source == SourceNativeWindows
 }
