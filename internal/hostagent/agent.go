@@ -59,6 +59,7 @@ func (a *Agent) Run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	diagnostics := newAcquisitionState(mode, a.Config.ParityTolerance(), a.Config.LockApps, a.Config.LockTitleContains)
 
 	var buckets Buckets
 	if usesActivityWatch(mode) {
@@ -77,6 +78,9 @@ func (a *Agent) Run(ctx context.Context) error {
 		return err
 	}
 	defer shutdownBrowser()
+	if mode == "shadow" || mode == "native" {
+		a.startNativeLoop(ctx, hostname, mode, diagnostics)
+	}
 
 	now := time.Now().UTC()
 	locationResult, locationErr := a.Location.Observe(ctx, now)
@@ -86,16 +90,12 @@ func (a *Agent) Run(ctx context.Context) error {
 	dayStart, _, _ := a.Config.ReportingPeriod(now)
 	weekday := (int(dayStart.Weekday()) + 6) % 7
 	queryStart := dayStart.AddDate(0, 0, -weekday)
-	if sendErr := a.acquireAndSend(ctx, hostname, &buckets, queryStart, now, locationResult); sendErr != nil {
+	if sendErr := a.acquireAndSend(ctx, hostname, &buckets, queryStart, now, locationResult, diagnostics); sendErr != nil {
 		a.Logger.Warn("initial observation forwarding failed", "error", sendErr)
 	}
 	lastQuery := now
 
-	interval := a.Config.PollInterval()
-	if mode != "activitywatch" && a.Config.NativePollInterval() < interval {
-		interval = a.Config.NativePollInterval()
-	}
-	poll := time.NewTicker(interval)
+	poll := time.NewTicker(a.Config.PollInterval())
 	defer poll.Stop()
 	networkTick := time.NewTicker(a.Config.NetworkRefresh())
 	defer networkTick.Stop()
@@ -116,7 +116,7 @@ func (a *Agent) Run(ctx context.Context) error {
 		case tick := <-poll.C:
 			lookback := max(2*a.Config.StatusStale(), time.Minute)
 			start := lastQuery.Add(-lookback)
-			if sendErr := a.acquireAndSend(ctx, hostname, &buckets, start, tick.UTC(), locationResult); sendErr != nil {
+			if sendErr := a.acquireAndSend(ctx, hostname, &buckets, start, tick.UTC(), locationResult, diagnostics); sendErr != nil {
 				a.Logger.Warn("observation forwarding failed", "error", sendErr)
 			} else {
 				lastQuery = tick.UTC()
@@ -127,14 +127,9 @@ func (a *Agent) Run(ctx context.Context) error {
 
 func usesActivityWatch(mode string) bool { return mode == "activitywatch" || mode == "shadow" }
 
-func (a *Agent) acquireAndSend(ctx context.Context, hostname string, buckets *Buckets, start, end time.Time, network location.Result) error {
+func (a *Agent) acquireAndSend(ctx context.Context, hostname string, buckets *Buckets, start, end time.Time, network location.Result, diagnostics *acquisitionState) error {
 	mode := a.Config.AcquisitionMode()
 	batch := coreprotocol.Batch{SchemaVersion: coreprotocol.SchemaVersion, AgentID: hostname, SentAt: end}
-	diagnostics := &coreprotocol.AcquisitionDiagnostics{Mode: mode}
-	diagnostics.ActivityWatch.Enabled = usesActivityWatch(mode)
-	diagnostics.NativeForeground.Enabled = mode == "shadow" || mode == "native"
-	diagnostics.NativeAFK.Enabled = diagnostics.NativeForeground.Enabled
-	diagnostics.NativeSession.Enabled = diagnostics.NativeForeground.Enabled
 
 	var awErr error
 	if usesActivityWatch(mode) {
@@ -145,40 +140,12 @@ func (a *Agent) acquireAndSend(ctx context.Context, hostname string, buckets *Bu
 			awErr = a.appendActivityWatch(ctx, &batch, *buckets, start, end)
 		}
 		if awErr != nil {
-			diagnostics.ActivityWatch.Message = "unavailable: " + awErr.Error()
+			diagnostics.updateActivityWatch(nil, nil, awErr, end)
 		} else {
-			diagnostics.ActivityWatch.Connected = true
-			diagnostics.ActivityWatch.LastObservation = latestAuthoritativeObservation(batch.Windows, batch.AFK)
+			diagnostics.updateActivityWatch(batch.Windows, batch.AFK, nil, end)
 		}
 	}
-
-	var nativeResult nativewatcher.Result
-	if mode == "shadow" || mode == "native" {
-		nativeResult = a.Native.Observe(ctx, end)
-		applyComponent(&diagnostics.NativeForeground, nativeResult.Foreground)
-		applyComponent(&diagnostics.NativeAFK, nativeResult.Input)
-		applyComponent(&diagnostics.NativeSession, nativeResult.SessionAPI)
-		if nativeResult.Session != nil {
-			batch.Sessions = append(batch.Sessions, *nativeResult.Session)
-		}
-		if mode == "native" {
-			if nativeResult.Window != nil {
-				batch.Windows = append(batch.Windows, *nativeResult.Window)
-			}
-			if nativeResult.AFK != nil {
-				batch.AFK = append(batch.AFK, *nativeResult.AFK)
-			}
-		} else {
-			if nativeResult.Window != nil {
-				batch.ShadowWindows = append(batch.ShadowWindows, *nativeResult.Window)
-			}
-			if nativeResult.AFK != nil {
-				batch.ShadowAFK = append(batch.ShadowAFK, *nativeResult.AFK)
-			}
-			diagnostics.Comparison = compareSources(batch.Windows, batch.AFK, nativeResult, end, a.Config.ParityTolerance(), a.Config.LockApps, a.Config.LockTitleContains)
-		}
-	}
-	batch.Acquisition = diagnostics
+	batch.Acquisition = diagnostics.snapshot()
 	a.appendHostContext(ctx, &batch, end, network)
 	if err := batch.NormalizeAndValidate(); err != nil {
 		return fmt.Errorf("normalize observations: %w", err)
@@ -190,6 +157,52 @@ func (a *Agent) acquireAndSend(ctx context.Context, hostname string, buckets *Bu
 		a.Logger.Warn("ActivityWatch acquisition degraded", "error", awErr)
 	}
 	return nil
+}
+
+func (a *Agent) startNativeLoop(ctx context.Context, hostname, mode string, diagnostics *acquisitionState) {
+	go func() {
+		sample := func(at time.Time) {
+			result := a.Native.Observe(ctx, at.UTC())
+			diagnostics.updateNative(result, at.UTC())
+			batch := coreprotocol.Batch{SchemaVersion: coreprotocol.SchemaVersion, AgentID: hostname, SentAt: at.UTC(), Acquisition: diagnostics.snapshot()}
+			if result.Session != nil {
+				batch.Sessions = append(batch.Sessions, *result.Session)
+			}
+			if mode == "native" {
+				if result.Window != nil {
+					batch.Windows = append(batch.Windows, *result.Window)
+				}
+				if result.AFK != nil {
+					batch.AFK = append(batch.AFK, *result.AFK)
+				}
+			} else {
+				if result.Window != nil {
+					batch.ShadowWindows = append(batch.ShadowWindows, *result.Window)
+				}
+				if result.AFK != nil {
+					batch.ShadowAFK = append(batch.ShadowAFK, *result.AFK)
+				}
+			}
+			if err := batch.NormalizeAndValidate(); err != nil {
+				a.Logger.Error("native observation normalization failed", "error", err)
+				return
+			}
+			if err := a.Core.Send(ctx, batch); err != nil && ctx.Err() == nil {
+				a.Logger.Warn("native observation forwarding failed", "error", err)
+			}
+		}
+		sample(time.Now())
+		ticker := time.NewTicker(a.Config.NativePollInterval())
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case at := <-ticker.C:
+				sample(at)
+			}
+		}
+	}()
 }
 
 func (a *Agent) appendActivityWatch(ctx context.Context, batch *coreprotocol.Batch, buckets Buckets, start, end time.Time) error {
@@ -235,14 +248,6 @@ func (a *Agent) appendHostContext(ctx context.Context, batch *coreprotocol.Batch
 		apps[detector.ID()] = coreprotocol.AppObservation{SourceID: detector.ID(), State: observation.State, Available: observation.Available, ObservedAt: observation.ObservedAt}
 	}
 	batch.HostContext = []coreprotocol.HostContextObservation{{Start: end, End: end, Location: network.Location, LocationEvidence: network.Evidence, Health: network.Health, Apps: apps}}
-}
-
-func applyComponent(target *coreprotocol.SourceHealth, result nativewatcher.ComponentResult) {
-	target.Connected = result.Connected
-	target.LastObservation = result.LastObservation
-	if result.Error != nil {
-		target.Message = result.Error.Error()
-	}
 }
 
 func latestAuthoritativeObservation(windows []coreprotocol.WindowObservation, afk []coreprotocol.AFKObservation) *time.Time {
