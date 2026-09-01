@@ -21,7 +21,16 @@ func Build(windows []model.WindowEvent, afks []model.AFKEvent, contexts []model.
 }
 
 func BuildWithPassive(windows []model.WindowEvent, afks []model.AFKEvent, contexts []model.ContextEvent, passiveEvents []model.PassiveEvidenceEvent, start, end time.Time, opt Options) []model.Segment {
+	sort.SliceStable(windows, func(i, j int) bool {
+		return windows[i].Start.Before(windows[j].Start) || (windows[i].Start.Equal(windows[j].Start) && windows[i].End.Before(windows[j].End))
+	})
 	afks = mergeAFK(afks, opt.EvidenceFreshness)
+	sort.SliceStable(afks, func(i, j int) bool {
+		return afks[i].Start.Before(afks[j].Start) || (afks[i].Start.Equal(afks[j].Start) && afks[i].End.Before(afks[j].End))
+	})
+	sort.SliceStable(contexts, func(i, j int) bool {
+		return contexts[i].Start.Before(contexts[j].Start) || (contexts[i].Start.Equal(contexts[j].Start) && contexts[i].End.Before(contexts[j].End))
+	})
 	points := []time.Time{start, end}
 	for _, w := range windows {
 		points = append(points, w.Start, w.End, w.End.Add(opt.EvidenceFreshness))
@@ -231,32 +240,33 @@ func findWindow(xs []model.WindowEvent, t time.Time, freshness time.Duration) *m
 	return latestWindow(xs, t, freshness)
 }
 func findAFK(xs []model.AFKEvent, t time.Time, freshness time.Duration) *model.AFKEvent {
-	var best *model.AFKEvent
-	for i := range xs {
-		if evidenceEligible(xs[i].Start, xs[i].End, t, freshness) && (best == nil || laterEvidence(xs[i].Start, xs[i].End, best.Start, best.End)) {
-			best = &xs[i]
+	for i := latestStartIndex(len(xs), func(index int) time.Time { return xs[index].Start }, t); i >= 0; i-- {
+		if evidenceEligible(xs[i].Start, xs[i].End, t, freshness) {
+			return &xs[i]
 		}
 	}
-	return best
+	return nil
 }
 func findContext(xs []model.ContextEvent, t time.Time, freshness time.Duration) *model.ContextEvent {
-	var best *model.ContextEvent
-	for i := range xs {
-		if evidenceEligible(xs[i].Start, xs[i].End, t, freshness) && (best == nil || laterEvidence(xs[i].Start, xs[i].End, best.Start, best.End)) {
-			best = &xs[i]
+	for i := latestStartIndex(len(xs), func(index int) time.Time { return xs[index].Start }, t); i >= 0; i-- {
+		if evidenceEligible(xs[i].Start, xs[i].End, t, freshness) {
+			return &xs[i]
 		}
 	}
-	return best
+	return nil
 }
 
 func latestWindow(xs []model.WindowEvent, t time.Time, freshness time.Duration) *model.WindowEvent {
-	var best *model.WindowEvent
-	for i := range xs {
-		if evidenceEligible(xs[i].Start, xs[i].End, t, freshness) && (best == nil || laterEvidence(xs[i].Start, xs[i].End, best.Start, best.End)) {
-			best = &xs[i]
+	for i := latestStartIndex(len(xs), func(index int) time.Time { return xs[index].Start }, t); i >= 0; i-- {
+		if evidenceEligible(xs[i].Start, xs[i].End, t, freshness) {
+			return &xs[i]
 		}
 	}
-	return best
+	return nil
+}
+
+func latestStartIndex(length int, startAt func(int) time.Time, t time.Time) int {
+	return sort.Search(length, func(i int) bool { return startAt(i).After(t) }) - 1
 }
 
 func evidenceEligible(start, end, observationTime time.Time, freshness time.Duration) bool {
