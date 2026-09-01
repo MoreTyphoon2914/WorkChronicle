@@ -16,6 +16,7 @@
     .card { grid-column:span 4; background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:17px; min-width:0; }
     .wide { grid-column:span 8; } .full { grid-column:1/-1; }
     .hero { font-size:30px; font-weight:750; letter-spacing:.02em; }
+    .metric { font-size:24px; font-weight:700; margin:0 0 12px; }
     .good { color:var(--good); } .warn { color:var(--warn); } .bad { color:var(--bad); }
     dl { display:grid; grid-template-columns:minmax(115px,auto) 1fr; gap:7px 14px; margin:0; }
     dt { color:var(--muted); } dd { margin:0; overflow-wrap:anywhere; }
@@ -32,10 +33,10 @@
   <header><div><h1>WorkChronicle</h1><div class="muted">Docker Core dashboard</div></div><div id="refreshed" class="muted tiny">Loading…</div></header>
   <div id="error"></div>
   <section class="grid">
-    <article class="card"><h2>Current status</h2><div id="state" class="hero">—</div><dl><dt>Location</dt><dd id="location">—</dd><dt>Health</dt><dd id="trackerHealth">—</dd><dt>Application</dt><dd id="application">—</dd></dl></article>
-    <article class="card"><h2>Today</h2><dl><dt>Working</dt><dd id="todayWorking">—</dd><dt>Break</dt><dd id="todayBreak">—</dd><dt>Untracked</dt><dd id="todayUntracked">—</dd><dt>Target remaining</dt><dd id="remaining">—</dd><dt>Estimated finish</dt><dd id="finish">—</dd><dt>Evaluation</dt><dd id="evaluation">—</dd></dl></article>
+    <article class="card"><h2>Current status</h2><div id="state" class="hero">—</div><dl><dt>Location</dt><dd id="location">—</dd><dt>Health</dt><dd id="trackerHealth">—</dd><dt>Application</dt><dd id="application">—</dd><dt>Credited working today</dt><dd id="currentWorking">—</dd><dt>Session time today</dt><dd id="currentSession">—</dd><dt>Remaining working target</dt><dd id="currentRemaining">—</dd></dl></article>
+    <article class="card"><h2>Today</h2><div class="muted tiny">Session time = Working + Break + Untracked. Working is credited time; Work remaining is credited WORKING time needed to reach the target.</div><div id="todaySession" class="metric">—</div><dl><dt>Working</dt><dd id="todayWorking">—</dd><dt>Break</dt><dd id="todayBreak">—</dd><dt>Untracked</dt><dd id="todayUntracked">—</dd><dt>First work</dt><dd id="firstWork">—</dd><dt id="lastWorkLabel">Last work</dt><dd id="lastWork">—</dd><dt id="reportEndLabel">Report through</dt><dd id="reportEnd">—</dd><dt>Target</dt><dd id="target">—</dd><dt>Work remaining</dt><dd id="remaining">—</dd><dt>Estimated finish</dt><dd id="finish">—</dd><dt>Evaluation</dt><dd id="evaluation">—</dd></dl><p id="todayLiveNote" class="muted tiny"></p></article>
     <article class="card"><h2>Core health</h2><dl><dt>Agent</dt><dd id="agent">—</dd><dt>Persistence</dt><dd id="persistence">—</dd><dt>Last ingest</dt><dd id="lastIngest">—</dd></dl></article>
-    <article class="card wide"><h2>This week</h2><dl><dt>Period</dt><dd id="weekPeriod">—</dd><dt>Working</dt><dd id="weekWorking">—</dd><dt>Break</dt><dd id="weekBreak">—</dd><dt>Untracked</dt><dd id="weekUntracked">—</dd><dt>Daily average</dt><dd id="weekAverage">—</dd><dt>Evaluation</dt><dd id="weekEvaluation">—</dd></dl></article>
+    <article class="card wide"><h2>This week</h2><div class="muted tiny">Total session = Working + Break + Untracked.</div><dl><dt>Period</dt><dd id="weekPeriod">—</dd><dt>Total session</dt><dd id="weekSession">—</dd><dt>Credited working</dt><dd id="weekWorking">—</dd><dt>Break</dt><dd id="weekBreak">—</dd><dt>Untracked</dt><dd id="weekUntracked">—</dd><dt>Daily working average</dt><dd id="weekAverage">—</dd><dt>Evaluation</dt><dd id="weekEvaluation">—</dd></dl></article>
     <article class="card"><h2>Observations</h2><dl id="observations"></dl></article>
     <article class="card full"><h2>Browser integrations</h2><p class="muted tiny">Connected means this extension integration sent an observation or heartbeat within the configured freshness window; it does not assert that an arbitrary browser process is open.</p><table><thead><tr><th>Browser</th><th>Integration</th><th>Last seen</th><th>Observations</th></tr></thead><tbody id="browsers"></tbody></table></article>
   </section>
@@ -43,6 +44,7 @@
 <script>
   const $ = id => document.getElementById(id);
   const duration = seconds => { seconds=Math.max(0,Number(seconds)||0); const h=Math.floor(seconds/3600),m=Math.floor((seconds%3600)/60),s=Math.floor(seconds%60); return `${h}h ${String(m).padStart(2,'0')}m ${String(s).padStart(2,'0')}s`; };
+  const sessionSeconds = totals => Number(totals?.working_seconds||0)+Number(totals?.break_seconds||0)+Number(totals?.untracked_seconds||0);
   const instant = value => value ? new Date(value).toLocaleString() : 'Never';
   const set = (id,value) => { $(id).textContent=value; };
   function stateClass(value) { return value==='WORKING'?'good':value==='BREAK'?'warn':'bad'; }
@@ -50,10 +52,13 @@
     set('state',status.work_state||'UNTRACKED'); $('state').className=`hero ${stateClass(status.work_state)}`;
     set('location',`${status.location||'—'} (${status.location_evidence||'—'})`); set('trackerHealth',status.tracker_health||'—');
     set('application',status.foreground?.executable||'Unavailable');
-    set('todayWorking',duration(today.totals?.working_seconds)); set('todayBreak',duration(today.totals?.break_seconds)); set('todayUntracked',duration(today.totals?.untracked_seconds));
+    set('currentWorking',duration(today.totals?.working_seconds)); set('currentSession',duration(sessionSeconds(today.totals))); set('currentRemaining',duration(today.remaining_target_seconds));
+    set('todaySession',duration(sessionSeconds(today.totals))); set('todayWorking',duration(today.totals?.working_seconds)); set('todayBreak',duration(today.totals?.break_seconds)); set('todayUntracked',duration(today.totals?.untracked_seconds));
+    set('firstWork',instant(today.first_work_at)); set('lastWork',instant(today.last_work_at)); set('reportEnd',instant(today.report_end)); set('target',duration(today.standard_target_seconds));
     set('remaining',duration(today.remaining_target_seconds)); set('finish',today.estimated_finish?instant(today.estimated_finish):'Not applicable'); set('evaluation',today.work_band||today.work_evaluation?.band||'—');
+    set('lastWorkLabel',today.live?'Last work (live report)':'Last work'); set('reportEndLabel',today.live?'Report through (live)':'Report through'); set('todayLiveNote',today.live?'Live report — Last work and Report through may change as observations arrive.':'Completed report.');
     set('agent',health.agent_connected?'Connected':'Not connected'); set('persistence',health.persistence||'—'); set('lastIngest',instant(health.last_ingest));
-    set('weekPeriod',`${instant(week.period_start)} — ${instant(week.period_end)}`); set('weekWorking',duration(week.totals?.working_seconds)); set('weekBreak',duration(week.totals?.break_seconds)); set('weekUntracked',duration(week.totals?.untracked_seconds)); set('weekAverage',`${duration(week.average_working_seconds)} (${week.average_denominator||0} workday denominator)`); set('weekEvaluation',week.work_evaluation?.band||'—');
+    set('weekPeriod',`${instant(week.period_start)} — ${instant(week.period_end)}`); set('weekSession',duration(sessionSeconds(week.totals))); set('weekWorking',duration(week.totals?.working_seconds)); set('weekBreak',duration(week.totals?.break_seconds)); set('weekUntracked',duration(week.totals?.untracked_seconds)); set('weekAverage',`${duration(week.average_working_seconds)} (${week.average_denominator||0} workday denominator)`); set('weekEvaluation',week.work_evaluation?.band||'—');
     const counts=health.observation_counts||{}; $('observations').replaceChildren(...Object.entries(counts).map(([name,count])=>{ const f=document.createDocumentFragment(),dt=document.createElement('dt'),dd=document.createElement('dd'); dt.textContent=name.replaceAll('_',' ');dd.textContent=String(count);f.append(dt,dd);return f; }));
     const sources=health.browsers?.sources||{}; $('browsers').replaceChildren(...['firefox','chrome','edge'].map(name=>{ const source=sources[name]||{},tr=document.createElement('tr'); [name[0].toUpperCase()+name.slice(1),source.active?'Connected':'Not detected',instant(source.last_seen),String(source.observations||0)].forEach((value,index)=>{const td=document.createElement('td');td.textContent=value;if(index===1)td.className=source.active?'good':'muted';tr.append(td);});return tr; }));
     set('refreshed',`Updated ${new Date().toLocaleTimeString()} · refreshes every 5 seconds`); $('error').style.display='none';
