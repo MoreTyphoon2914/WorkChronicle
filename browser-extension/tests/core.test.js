@@ -20,6 +20,10 @@
     }
   }
 
+  assert("Firefox identity", core.detectBrowserFamily("Mozilla/5.0 Firefox/142.0") === "firefox");
+  assert("Chrome identity", core.detectBrowserFamily("Mozilla/5.0 Chrome/140.0.0.0 Safari/537.36") === "chrome");
+  assert("Edge identity", core.detectBrowserFamily("Mozilla/5.0 Chrome/140.0.0.0 Safari/537.36 Edg/140.0.0.0") === "edge");
+
   function media(tag, paused, ended, muted, volume) {
     return { tagName: tag, paused: paused, ended: ended, muted: muted, volume: volume };
   }

@@ -10,6 +10,13 @@
     return String(value || "").toLowerCase();
   }
 
+  function detectBrowserFamily(userAgent) {
+    var agent = lower(userAgent);
+    if (agent.indexOf("firefox/") >= 0) { return "firefox"; }
+    if (agent.indexOf("edg/") >= 0) { return "edge"; }
+    return "chrome";
+  }
+
   function mediaType(element) {
     return lower(element && element.tagName) === "audio" ? "audio" : "video";
   }
@@ -145,6 +152,7 @@
     SCHEMA_VERSION: SCHEMA_VERSION,
     aggregateMedia: aggregateMedia,
     buildObservation: buildObservation,
+	detectBrowserFamily: detectBrowserFamily,
     domainFromUrl: domainFromUrl,
     hasMeaningfulChange: hasMeaningfulChange,
     meaningfulFingerprint: meaningfulFingerprint,
