@@ -233,6 +233,24 @@ func TestOldStartLongAFKRemainsFresh(t *testing.T) {
 	}
 }
 
+func TestOlderLongEventSurvivesNewerStaleEventsWithIndexedLookup(t *testing.T) {
+	reportTime := tm(14, 8)
+	start := tm(13, 0)
+	windows := []model.WindowEvent{
+		{Start: tm(13, 20), End: reportTime, App: "long-running.exe"},
+		{Start: tm(14, 0), End: tm(14, 0), App: "stale.exe"},
+	}
+	contexts := []model.ContextEvent{
+		contextEvent(tm(13, 20), reportTime, model.Office, model.Confirmed, "paused"),
+		contextEvent(tm(14, 0), tm(14, 0), model.Remote, model.Confirmed, "playing"),
+	}
+	segments := Build(windows, nil, contexts, start, reportTime, freshOptions())
+	current := segments[len(segments)-1]
+	if current.State != model.Working || current.ForegroundApp != "long-running.exe" || current.Location != model.Office {
+		t.Fatalf("older long-duration evidence was lost behind stale newer events: %#v", current)
+	}
+}
+
 func TestRapidForegroundSwitchingSelectsLatestFreshEvidence(t *testing.T) {
 	reportTime := tm(14, 8)
 	start := reportTime.Add(-time.Minute)
