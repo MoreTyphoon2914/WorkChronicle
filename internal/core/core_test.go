@@ -160,6 +160,11 @@ func TestDashboardIsServedWithoutRawTitleProjection(t *testing.T) {
 	if !bytes.Contains([]byte(body), []byte("WorkChronicle")) || bytes.Contains([]byte(body), []byte("foreground.title")) {
 		t.Fatalf("dashboard branding/privacy projection is invalid")
 	}
+	for _, marker := range []string{"Session time = Working + Break + Untracked.", "Credited working today", "First work", "Last work", "Report through", "Total session", "Remaining working target"} {
+		if !bytes.Contains([]byte(body), []byte(marker)) {
+			t.Fatalf("dashboard omitted presentation marker %q", marker)
+		}
+	}
 }
 
 func TestHealthPreservesAggregateBrowserCountAndFamilyDiagnostics(t *testing.T) {
