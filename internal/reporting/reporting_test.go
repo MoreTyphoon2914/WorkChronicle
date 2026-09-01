@@ -137,7 +137,7 @@ func TestWeeklySummaryPartialWeekAndWeekend(t *testing.T) {
 		{name: "weekend activity", end: monday.AddDate(0, 0, 5).Add(8 * time.Hour), days: []model.DayReport{day(8), day(8), day(8), day(8), day(8), day(2)}, denominator: 5},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			r := summarizeWeek(tc.days, monday, tc.end, 5, weekly)
+			r := SummarizeWeek(tc.days, monday, tc.end, 5, weekly)
 			if r.SchemaVersion != 2 {
 				t.Fatalf("weekly schema version=%d", r.SchemaVersion)
 			}
@@ -215,7 +215,7 @@ func TestWeekToDateEvaluationAndJSONCompatibility(t *testing.T) {
 		{Totals: model.Totals{WorkingSeconds: (20 * time.Hour).Seconds(), UntrackedSeconds: 999999}},
 		{Totals: model.Totals{WorkingSeconds: 1}},
 	}
-	applyWeekToDateEvaluation(reports, weekly)
+	ApplyWeekToDateEvaluation(reports, weekly)
 	if reports[0].WeekToDateEvaluation.Band != workpolicy.BelowStandardMinimum || reports[1].WeekToDateEvaluation.Band != workpolicy.Standard || reports[2].WeekToDateEvaluation.Band != workpolicy.Overtime || reports[2].WeekToDateEvaluation.OvertimeSeconds != 1 {
 		t.Fatalf("week-to-date evaluations=%#v", reports)
 	}

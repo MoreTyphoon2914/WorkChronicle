@@ -8,16 +8,19 @@ if (-not (Test-Path -LiteralPath $python)) {
     throw "Repository Python environment not found at $python"
 }
 
-$collectors = @(Get-CimInstance Win32_Process | Where-Object {
-    $_.Name -eq "worktracker.exe" -and
-    $_.CommandLine -match "\srun(?:\s|$)" -and
-    $_.ExecutablePath -eq (Join-Path $repoRoot "bin\worktracker.exe")
+$agents = @(Get-CimInstance Win32_Process | Where-Object {
+    $_.Name -eq "workchronicle-agent.exe" -and
+    $_.ExecutablePath -eq (Join-Path $repoRoot "bin\workchronicle-agent.exe")
 })
-if ($collectors.Count -ne 1) {
-    throw "Expected exactly one repository WorkChronicle collector; found $($collectors.Count)"
+if ($agents.Count -ne 1) {
+    throw "Expected exactly one repository WorkChronicle Host Agent; found $($agents.Count)"
 }
 
-& $python (Join-Path $extensionRoot "integration\run.py") --repo $repoRoot --collector-pid $collectors[0].ProcessId
+& $python (Join-Path $extensionRoot "integration\run.py") `
+    --repo $repoRoot `
+    --agent-pid $agents[0].ProcessId `
+    --agent (Join-Path $repoRoot "bin\workchronicle-agent.exe") `
+    --token-file (Join-Path $repoRoot "secrets\agent-token.txt")
 if ($LASTEXITCODE -ne 0) {
     throw "Browser integration tests failed with exit code $LASTEXITCODE"
 }

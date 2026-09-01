@@ -1,0 +1,15 @@
+.git
+.github
+.venv
+bin
+logs
+reports
+validation/results
+browser-extension/dist
+config.json
+secrets
+*.pem
+*.key
+*.pfx
+*.p12
+Dockerfile.*

@@ -14,10 +14,7 @@
   var lastFailureLog = 0;
 
   function detectBrowser() {
-    var agent = String(navigator.userAgent || "").toLowerCase();
-    if (agent.indexOf("firefox/") >= 0) { return "firefox"; }
-    if (agent.indexOf("edg/") >= 0) { return "edge"; }
-    return "chrome";
+	return core.detectBrowserFamily(navigator.userAgent || "");
   }
 
   function emptyMedia() {

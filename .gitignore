@@ -16,4 +16,5 @@ reports/
 *.key
 *.pfx
 *.p12
-Dockerfile
+secrets/*
+!secrets/README.md

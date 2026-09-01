@@ -98,17 +98,23 @@ func (s *Service) day(ctx context.Context, start, end time.Time, live bool) (mod
 	w, a, c := activitywatch.Normalize(q)
 	passive := normalizeBrowserEvents(q.Browser)
 	segments := classifier.BuildWithPassive(w, a, c, passive, start, end, classifier.Options{AFKGrace: s.Config.AFKGrace(), AutoEnd: s.Config.AutoEnd(), EvidenceFreshness: s.Config.StatusStale(), LockApps: s.Config.LockApps, LockTitleContains: s.Config.LockTitleContains})
-	r := classifier.Calculate(segments, end, s.Config.AutoEnd())
 	if s.DailyEvaluator == nil {
 		return model.DayReport{}, fmt.Errorf("daily work evaluator is not configured")
 	}
-	r.WorkEvaluation = evaluateWork(s.DailyEvaluator, r.Totals.WorkingSeconds)
-	r.Date = start.In(mustLocation(s.Config)).Format("2006-01-02")
+	return BuildDay(start.In(mustLocation(s.Config)), end, segments, live, s.Config.AutoEnd(), s.DailyEvaluator), nil
+}
+
+// BuildDay derives report output from already-classified segments. It contains
+// no evidence interpretation and is shared by ActivityWatch and Docker Core.
+func BuildDay(start, end time.Time, segments []model.Segment, live bool, autoEnd time.Duration, evaluator workpolicy.Evaluator) model.DayReport {
+	r := classifier.Calculate(segments, end, autoEnd)
+	r.WorkEvaluation = evaluateWork(evaluator, r.Totals.WorkingSeconds)
+	r.Date = start.Format("2006-01-02")
 	finalizeDay(&r, end, live)
 	if r.FirstWorkAt != nil {
 		r.Usage = Usage(segments, r.Start, r.End)
 	}
-	return r, nil
+	return r
 }
 
 func finalizeDay(r *model.DayReport, reportEnd time.Time, live bool) {
@@ -205,11 +211,11 @@ func (s *Service) WeekReport(ctx context.Context, now time.Time) (model.WeekRepo
 	if s.WeeklyEvaluator == nil {
 		return model.WeekReport{}, fmt.Errorf("weekly work evaluator is not configured")
 	}
-	applyWeekToDateEvaluation(out, s.WeeklyEvaluator)
-	return summarizeWeek(out, monday, now.In(mustLocation(s.Config)), s.Config.WorkTargets.WorkdaysPerWeek, s.WeeklyEvaluator), nil
+	ApplyWeekToDateEvaluation(out, s.WeeklyEvaluator)
+	return SummarizeWeek(out, monday, now.In(mustLocation(s.Config)), s.Config.WorkTargets.WorkdaysPerWeek, s.WeeklyEvaluator), nil
 }
 
-func summarizeWeek(reports []model.DayReport, periodStart, periodEnd time.Time, configuredWorkdays int, evaluator workpolicy.Evaluator) model.WeekReport {
+func SummarizeWeek(reports []model.DayReport, periodStart, periodEnd time.Time, configuredWorkdays int, evaluator workpolicy.Evaluator) model.WeekReport {
 	report := model.WeekReport{SchemaVersion: 2, PeriodStart: periodStart, PeriodEnd: periodEnd, Days: reports}
 	for _, day := range reports {
 		report.Totals.WorkingSeconds += day.Totals.WorkingSeconds
@@ -242,7 +248,7 @@ func evaluateWork(evaluator workpolicy.Evaluator, workingSeconds float64) workpo
 	return evaluator.Evaluate(workpolicy.WorkSummary{Working: time.Duration(workingSeconds * float64(time.Second))})
 }
 
-func applyWeekToDateEvaluation(reports []model.DayReport, evaluator workpolicy.Evaluator) {
+func ApplyWeekToDateEvaluation(reports []model.DayReport, evaluator workpolicy.Evaluator) {
 	var workingSeconds float64
 	for i := range reports {
 		workingSeconds += reports[i].Totals.WorkingSeconds

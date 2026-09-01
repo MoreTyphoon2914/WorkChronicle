@@ -635,15 +635,12 @@ def media_is(state: str, present: bool = True, media_type: str | None = None, ac
     return predicate
 
 
-def status_json(worktracker: Path, config: Path) -> dict[str, Any]:
-    completed = subprocess.run([str(worktracker), "status", "--config", str(config), "--json"], capture_output=True, text=True, timeout=30)
-    if completed.returncode != 0:
-        raise RuntimeError(f"status failed: {completed.stderr.strip()}")
-    return json.loads(completed.stdout)
+def status_json(core_url: str) -> dict[str, Any]:
+    return json_request(core_url.rstrip("/") + "/api/v1/status", timeout=30)
 
 
-def assert_status(worktracker: Path, config: Path, source_id: str, state: str, passive: bool, require_vlc: bool = False) -> None:
-    status = status_json(worktracker, config)
+def assert_status(core_url: str, source_id: str, state: str, passive: bool, require_vlc: bool = False) -> None:
+    status = status_json(core_url)
     evidence = status.get("passive_detector_evidence", {})
     browser = evidence.get(source_id)
     if not browser:
@@ -654,7 +651,7 @@ def assert_status(worktracker: Path, config: Path, source_id: str, state: str, p
         raise AssertionError("status did not retain independent VLC evidence")
 
 
-def run_browser(controller: BrowserController, server: LocalTestServer, aw: ActivityWatchProbe, run_id: str, worktracker: Path, config: Path, results: TestResults, verify_status: bool) -> None:
+def run_browser(controller: BrowserController, server: LocalTestServer, aw: ActivityWatchProbe, run_id: str, core_url: str, results: TestResults, verify_status: bool) -> None:
     browser = controller.identity
     scenario = f"{server.base_url}/scenario.html?run={run_id}&browser={browser}"
     empty = f"{server.base_url}/empty.html?run={run_id}&browser={browser}"
@@ -667,30 +664,32 @@ def run_browser(controller: BrowserController, server: LocalTestServer, aw: Acti
 
     stage = utc_now()
     results.check(f"{browser}: dynamic video insertion and playback", lambda: controller.evaluate(tab, "wtTest.addVideo(true)"))
-    results.check(f"{browser}: video playing event", lambda: aw.wait(run_id, browser, media_is("playing", media_type="video"), "video playing", tab_id, since=stage))
+    playing_event = results.check(f"{browser}: video playing event", lambda: aw.wait(run_id, browser, media_is("playing", media_type="video"), "video playing", tab_id, since=stage))
     if verify_status:
-        results.check(f"{browser}: status playing passive_work=true with VLC coexistence", lambda: assert_status(worktracker, config, source_id, "playing", True, True))
+        results.check(f"{browser}: Core status playing passive_work=true with VLC coexistence", lambda: assert_status(core_url, source_id, "playing", True, True))
 
-    heartbeat_start = utc_now()
-    time.sleep(HEARTBEAT_SECONDS + 1.5)
     def heartbeat_check() -> None:
-        events = [event for event in aw.matching(run_id, browser, tab_id) if event.get("data", {}).get("media", {}).get("state") == "playing"]
-        recent = [event for event in events if datetime.fromisoformat(event["timestamp"].replace("Z", "+00:00")) >= heartbeat_start - timedelta(seconds=1)]
-        if len(recent) < 1:
-            raise AssertionError("no periodic playing heartbeat was persisted")
+        initial = datetime.fromisoformat(playing_event["timestamp"].replace("Z", "+00:00"))
+        def later_heartbeat() -> dict[str, Any] | None:
+            for event in aw.matching(run_id, browser, tab_id):
+                event_time = datetime.fromisoformat(event["timestamp"].replace("Z", "+00:00"))
+                if event_time >= initial + timedelta(seconds=HEARTBEAT_SECONDS - 1) and event.get("data", {}).get("media", {}).get("state") == "playing":
+                    return event
+            return None
+        wait_until(later_heartbeat, HEARTBEAT_SECONDS + 6, f"{browser} second playing heartbeat")
     results.check(f"{browser}: five-second heartbeat", heartbeat_check)
 
     stage = utc_now()
     results.check(f"{browser}: pause media", lambda: controller.evaluate(tab, "wtTest.pause()"))
     results.check(f"{browser}: video paused event", lambda: aw.wait(run_id, browser, media_is("paused", media_type="video"), "video paused", tab_id, since=stage))
     if verify_status:
-        results.check(f"{browser}: status paused passive_work=false", lambda: assert_status(worktracker, config, source_id, "paused", False, True))
+        results.check(f"{browser}: Core status paused passive_work=false", lambda: assert_status(core_url, source_id, "paused", False, True))
 
     stage = utc_now()
     results.check(f"{browser}: resume and naturally end media", lambda: controller.evaluate(tab, "wtTest.end()"))
     results.check(f"{browser}: video ended/stopped event", lambda: aw.wait(run_id, browser, media_is("stopped", media_type="video"), "video stopped", tab_id, since=stage))
     if verify_status:
-        results.check(f"{browser}: status stopped passive_work=false", lambda: assert_status(worktracker, config, source_id, "stopped", False, True))
+        results.check(f"{browser}: Core status stopped passive_work=false", lambda: assert_status(core_url, source_id, "stopped", False, True))
 
     stage = utc_now()
     results.check(f"{browser}: remove dynamic media", lambda: controller.evaluate(tab, "wtTest.remove()"))
@@ -774,12 +773,12 @@ def edge_policy_smoke(executable: Path, extension: Path, server: LocalTestServer
             time.sleep(0.25)
 
 
-def restart_collector(worktracker: Path, config: Path) -> subprocess.Popen[Any]:
+def restart_agent(agent: Path, config: Path, core_url: str, token_file: Path) -> subprocess.Popen[Any]:
     flags = getattr(subprocess, "DETACHED_PROCESS", 0) | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0) | getattr(subprocess, "CREATE_NO_WINDOW", 0)
-    return subprocess.Popen([str(worktracker), "run", "--config", str(config)], cwd=str(worktracker.parent.parent), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, creationflags=flags, close_fds=True)
+    return subprocess.Popen([str(agent), "--config", str(config), "--core-url", core_url, "--token-file", str(token_file)], cwd=str(agent.parent.parent), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, creationflags=flags, close_fds=True)
 
 
-def outage_recovery(controller: BrowserController, server: LocalTestServer, aw: ActivityWatchProbe, run_id: str, collector_pid: int, worktracker: Path, config: Path, results: TestResults) -> None:
+def outage_recovery(controller: BrowserController, server: LocalTestServer, aw: ActivityWatchProbe, run_id: str, agent_pid: int, agent: Path, config: Path, core_url: str, token_file: Path, results: TestResults) -> None:
     browser = controller.identity
     url = f"{server.base_url}/scenario.html?run={run_id}&browser={browser}&outage=1"
     tab = controller.create_tab(url)
@@ -789,14 +788,14 @@ def outage_recovery(controller: BrowserController, server: LocalTestServer, aw: 
     tab_id = str(event["data"]["tab_id"])
     restarted: subprocess.Popen[Any] | None = None
     try:
-        os.kill(collector_pid, 15)
+        os.kill(agent_pid, 15)
         wait_until(lambda: not ingest_healthy(), 8, "ingest endpoint shutdown")
         results.passed.append("ingest: temporary endpoint failure observed")
         print("PASS ingest: temporary endpoint failure observed", flush=True)
         time.sleep(HEARTBEAT_SECONDS + 1)
     finally:
-        restarted = restart_collector(worktracker, config)
-        wait_until(ingest_healthy, 15, "collector restart and ingest recovery")
+        restarted = restart_agent(agent, config, core_url, token_file)
+        wait_until(ingest_healthy, 15, "Host Agent restart and ingest recovery")
     recovery_start = utc_now()
     recovered = aw.wait(
         run_id, browser,
@@ -814,7 +813,10 @@ def outage_recovery(controller: BrowserController, server: LocalTestServer, aw: 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--repo", required=True, type=Path)
-    parser.add_argument("--collector-pid", required=True, type=int)
+    parser.add_argument("--agent-pid", required=True, type=int)
+    parser.add_argument("--agent", required=True, type=Path)
+    parser.add_argument("--token-file", required=True, type=Path)
+    parser.add_argument("--core-url", default="http://127.0.0.1:8080")
     parser.add_argument("--browsers", default="chrome,edge,firefox", help="comma-separated browser identities")
     return parser.parse_args()
 
@@ -823,7 +825,6 @@ def main() -> int:
     args = parse_args()
     repo = args.repo.resolve()
     config_path = repo / "config.json"
-    worktracker = repo / "bin" / "worktracker.exe"
     extension_root = repo / "browser-extension" / "dist"
     config = json.loads(config_path.read_text(encoding="utf-8"))
     hostname = socket.gethostname()
@@ -859,9 +860,9 @@ def main() -> int:
                     else:
                         controller = ChromiumController(identity, executable, extension_root / "chromium")
                     controllers.append(controller)
-                    run_browser(controller, server, aw, run_id, worktracker, config_path, results, verify_status=True)
+                    run_browser(controller, server, aw, run_id, args.core_url, results, verify_status=True)
                     if not collector_restarted:
-                        outage_recovery(controller, server, aw, run_id, args.collector_pid, worktracker, config_path, results)
+                        outage_recovery(controller, server, aw, run_id, args.agent_pid, args.agent, config_path, args.core_url, args.token_file, results)
                         collector_restarted = True
                 except UnsupportedBrowser as error:
                     results.skipped.append(f"{identity}: {error}")
@@ -889,7 +890,7 @@ def main() -> int:
         for controller in controllers:
             controller.close()
         if not ingest_healthy():
-            restart_collector(worktracker, config_path)
+            restart_agent(args.agent, config_path, args.core_url, args.token_file)
             try:
                 wait_until(ingest_healthy, 15, "collector restoration")
             except Exception as error:
