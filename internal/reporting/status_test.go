@@ -24,11 +24,26 @@ func TestStatusFromDayCarriesEvaluationAndCurrentEvidence(t *testing.T) {
 			Health:          model.Healthy,
 		}},
 	}
-	status := StatusFromDay(config.Config{WorkTargets: config.WorkTargets{DailyTargetHours: 8}}, report, now)
+	status := StatusFromDay(config.Config{WorkTargets: config.WorkTargets{DailyTargetHours: 99}}, report, now)
 	if status.WorkEvaluation.Band != workpolicy.Standard || status.RemainingSeconds != 3600 {
 		t.Fatalf("evaluation not carried into status: %#v", status)
 	}
+	if status.EstimatedFinish == nil || !status.EstimatedFinish.Equal(now.Add(time.Hour)) {
+		t.Fatalf("status estimate did not use evaluation remaining time: %#v", status)
+	}
 	if status.Foreground.Executable != "Code.exe" || status.PassiveDetectorEvidence["vlc"].State != "paused" {
 		t.Fatalf("current evidence not projected: %#v", status)
+	}
+}
+
+func TestStatusTargetReachedHasNoFutureEstimate(t *testing.T) {
+	now := time.Date(2026, 8, 21, 17, 0, 0, 0, time.UTC)
+	report := model.DayReport{
+		CurrentState:   model.Working,
+		WorkEvaluation: workpolicy.Evaluation{Band: workpolicy.Standard, StandardTargetRemainingSeconds: 0},
+	}
+	status := StatusFromDay(config.Config{}, report, now)
+	if status.RemainingSeconds != 0 || status.EstimatedFinish != nil || status.EstimateNote != "" {
+		t.Fatalf("target reached status has misleading estimate: %#v", status)
 	}
 }

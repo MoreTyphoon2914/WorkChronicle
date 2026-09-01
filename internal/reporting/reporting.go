@@ -83,6 +83,10 @@ func (s *Service) ResolveBuckets(ctx context.Context) (Buckets, error) {
 }
 
 func (s *Service) Day(ctx context.Context, start, end time.Time) (model.DayReport, error) {
+	return s.day(ctx, start, end, false)
+}
+
+func (s *Service) day(ctx context.Context, start, end time.Time, live bool) (model.DayReport, error) {
 	b, err := s.ResolveBuckets(ctx)
 	if err != nil {
 		return model.DayReport{}, err
@@ -100,10 +104,54 @@ func (s *Service) Day(ctx context.Context, start, end time.Time) (model.DayRepor
 	}
 	r.WorkEvaluation = evaluateWork(s.DailyEvaluator, r.Totals.WorkingSeconds)
 	r.Date = start.In(mustLocation(s.Config)).Format("2006-01-02")
-	if !r.Start.IsZero() {
+	finalizeDay(&r, end, live)
+	if r.FirstWorkAt != nil {
 		r.Usage = Usage(segments, r.Start, r.End)
 	}
 	return r, nil
+}
+
+func finalizeDay(r *model.DayReport, reportEnd time.Time, live bool) {
+	r.ReportEnd = reportEnd
+	r.Live = live
+	r.WorkBand = r.WorkEvaluation.Band
+	r.StandardTargetSeconds = r.WorkEvaluation.StandardTargetSeconds
+	r.RemainingTargetSeconds = r.WorkEvaluation.StandardTargetRemainingSeconds
+	r.OvertimeSeconds = r.WorkEvaluation.OvertimeSeconds
+
+	var first, last time.Time
+	for _, segment := range r.Timeline {
+		if segment.State != model.Working {
+			continue
+		}
+		left := segment.Start
+		right := earlier(segment.End, r.End)
+		if !right.After(left) {
+			continue
+		}
+		if first.IsZero() || left.Before(first) {
+			first = left
+		}
+		if last.IsZero() || right.After(last) {
+			last = right
+		}
+	}
+	if !first.IsZero() {
+		r.FirstWorkAt = &first
+	}
+	if !last.IsZero() {
+		r.LastWorkAt = &last
+	}
+	if live {
+		if r.RemainingTargetSeconds > 0 {
+			finish := reportEnd.Add(time.Duration(r.RemainingTargetSeconds * float64(time.Second)))
+			r.EstimatedFinish = &finish
+		}
+	} else {
+		r.FinalState = r.CurrentState
+		// CurrentState remains populated as a deprecated compatibility alias for
+		// existing day-array JSON consumers. New presentation uses FinalState.
+	}
 }
 
 func normalizeBrowserEvents(events []activitywatch.Event) []model.PassiveEvidenceEvent {
@@ -124,13 +172,21 @@ func (s *Service) Today(ctx context.Context, now time.Time) (model.DayReport, er
 	if err != nil {
 		return model.DayReport{}, err
 	}
-	return s.Day(ctx, start, end)
+	return s.day(ctx, start, end, true)
 }
 
 func (s *Service) Week(ctx context.Context, now time.Time) ([]model.DayReport, error) {
-	dayStart, _, err := s.Config.ReportingPeriod(now)
+	report, err := s.WeekReport(ctx, now)
 	if err != nil {
 		return nil, err
+	}
+	return report.Days, nil
+}
+
+func (s *Service) WeekReport(ctx context.Context, now time.Time) (model.WeekReport, error) {
+	dayStart, _, err := s.Config.ReportingPeriod(now)
+	if err != nil {
+		return model.WeekReport{}, err
 	}
 	weekday := (int(dayStart.Weekday()) + 6) % 7
 	monday := dayStart.AddDate(0, 0, -weekday)
@@ -140,17 +196,46 @@ func (s *Service) Week(ctx context.Context, now time.Time) ([]model.DayReport, e
 		if end.After(now) {
 			end = now
 		}
-		r, err := s.Day(ctx, start, end)
+		r, err := s.day(ctx, start, end, start.Equal(dayStart))
 		if err != nil {
-			return nil, fmt.Errorf("report %s: %w", start.Format("2006-01-02"), err)
+			return model.WeekReport{}, fmt.Errorf("report %s: %w", start.Format("2006-01-02"), err)
 		}
 		out = append(out, r)
 	}
 	if s.WeeklyEvaluator == nil {
-		return nil, fmt.Errorf("weekly work evaluator is not configured")
+		return model.WeekReport{}, fmt.Errorf("weekly work evaluator is not configured")
 	}
 	applyWeekToDateEvaluation(out, s.WeeklyEvaluator)
-	return out, nil
+	return summarizeWeek(out, monday, now.In(mustLocation(s.Config)), s.Config.WorkTargets.WorkdaysPerWeek, s.WeeklyEvaluator), nil
+}
+
+func summarizeWeek(reports []model.DayReport, periodStart, periodEnd time.Time, configuredWorkdays int, evaluator workpolicy.Evaluator) model.WeekReport {
+	report := model.WeekReport{SchemaVersion: 2, PeriodStart: periodStart, PeriodEnd: periodEnd, Days: reports}
+	for _, day := range reports {
+		report.Totals.WorkingSeconds += day.Totals.WorkingSeconds
+		report.Totals.BreakSeconds += day.Totals.BreakSeconds
+		report.Totals.UntrackedSeconds += day.Totals.UntrackedSeconds
+		report.ClassifiedCoverageTotals.WorkingSeconds += day.ClassifiedCoverageTotals.WorkingSeconds
+		report.ClassifiedCoverageTotals.BreakSeconds += day.ClassifiedCoverageTotals.BreakSeconds
+		report.ClassifiedCoverageTotals.UntrackedSeconds += day.ClassifiedCoverageTotals.UntrackedSeconds
+	}
+	report.AverageDenominator = elapsedWorkdays(periodEnd, configuredWorkdays)
+	if report.AverageDenominator > 0 {
+		report.AverageWorkingSeconds = report.Totals.WorkingSeconds / float64(report.AverageDenominator)
+	}
+	report.WorkEvaluation = evaluateWork(evaluator, report.Totals.WorkingSeconds)
+	return report
+}
+
+func elapsedWorkdays(periodEnd time.Time, configuredWorkdays int) int {
+	if configuredWorkdays <= 0 {
+		return 0
+	}
+	elapsedCalendarDays := (int(periodEnd.Weekday())+6)%7 + 1
+	if elapsedCalendarDays > configuredWorkdays {
+		return configuredWorkdays
+	}
+	return elapsedCalendarDays
 }
 
 func evaluateWork(evaluator workpolicy.Evaluator, workingSeconds float64) workpolicy.Evaluation {

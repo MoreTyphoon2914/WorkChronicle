@@ -133,7 +133,7 @@ type StatusReport struct {
 	Totals                  Totals                     `json:"totals"`
 	WorkEvaluation          workpolicy.Evaluation      `json:"work_evaluation"`
 	RemainingSeconds        float64                    `json:"remaining_seconds"`
-	EstimatedFinish         time.Time                  `json:"estimated_finish"`
+	EstimatedFinish         *time.Time                 `json:"estimated_finish,omitempty"`
 	EstimateNote            string                     `json:"estimate_note"`
 }
 
@@ -150,16 +150,42 @@ type Usage struct {
 }
 
 type DayReport struct {
-	Date                 string                 `json:"date"`
-	Start                time.Time              `json:"start,omitempty"`
-	End                  time.Time              `json:"end,omitempty"`
-	Totals               Totals                 `json:"totals"`
-	WorkEvaluation       workpolicy.Evaluation  `json:"work_evaluation"`
-	WeekToDateEvaluation *workpolicy.Evaluation `json:"week_to_date_evaluation,omitempty"`
-	Timeline             []Segment              `json:"timeline,omitempty"`
-	Usage                []Usage                `json:"usage,omitempty"`
-	AutoEnded            bool                   `json:"auto_ended"`
-	CurrentState         WorkState              `json:"current_state,omitempty"`
+	Date                     string                 `json:"date"`
+	FirstWorkAt              *time.Time             `json:"first_work_at,omitempty"`
+	LastWorkAt               *time.Time             `json:"last_work_at,omitempty"`
+	ReportEnd                time.Time              `json:"report_end"`
+	Live                     bool                   `json:"live"`
+	Start                    time.Time              `json:"start,omitempty"`
+	End                      time.Time              `json:"end,omitempty"`
+	Totals                   Totals                 `json:"totals"`
+	ClassifiedCoverageTotals Totals                 `json:"classified_coverage_totals"`
+	WorkEvaluation           workpolicy.Evaluation  `json:"work_evaluation"`
+	WorkBand                 workpolicy.Band        `json:"work_band"`
+	StandardTargetSeconds    float64                `json:"standard_target_seconds"`
+	RemainingTargetSeconds   float64                `json:"remaining_target_seconds"`
+	OvertimeSeconds          float64                `json:"overtime_seconds"`
+	EstimatedFinish          *time.Time             `json:"estimated_finish,omitempty"`
+	WeekToDateEvaluation     *workpolicy.Evaluation `json:"week_to_date_evaluation,omitempty"`
+	Timeline                 []Segment              `json:"timeline,omitempty"`
+	Usage                    []Usage                `json:"usage,omitempty"`
+	AutoEnded                bool                   `json:"auto_ended"`
+	CurrentState             WorkState              `json:"current_state,omitempty"`
+	FinalState               WorkState              `json:"final_state,omitempty"`
+}
+
+// WeekReport is the presentation-neutral weekly summary. The legacy week JSON
+// command continues to serialize Days directly so existing array consumers do
+// not break; presentation layers can consume this richer model.
+type WeekReport struct {
+	SchemaVersion            int                   `json:"schema_version"`
+	PeriodStart              time.Time             `json:"period_start"`
+	PeriodEnd                time.Time             `json:"period_end"`
+	Days                     []DayReport           `json:"days"`
+	Totals                   Totals                `json:"totals"`
+	ClassifiedCoverageTotals Totals                `json:"classified_coverage_totals"`
+	AverageWorkingSeconds    float64               `json:"average_working_seconds"`
+	AverageDenominator       int                   `json:"average_denominator"`
+	WorkEvaluation           workpolicy.Evaluation `json:"work_evaluation"`
 }
 
 // MarshalJSON emits canonical evaluation names and temporary aliases for the

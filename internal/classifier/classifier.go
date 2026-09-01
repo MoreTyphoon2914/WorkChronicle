@@ -156,7 +156,7 @@ func findPassiveEvidence(events []model.PassiveEvidenceEvent, t time.Time, fresh
 }
 
 func Calculate(segments []model.Segment, reportEnd time.Time, autoEnd time.Duration) model.DayReport {
-	r := model.DayReport{CurrentState: model.Untracked, Timeline: segments}
+	r := model.DayReport{CurrentState: model.Untracked, Timeline: segments, ReportEnd: reportEnd, End: reportEnd}
 	if len(segments) > 0 {
 		last := segments[len(segments)-1]
 		if !reportEnd.Before(last.Start) && !reportEnd.After(last.End) {
@@ -173,12 +173,18 @@ func Calculate(segments []model.Segment, reportEnd time.Time, autoEnd time.Durat
 			last = i
 		}
 	}
+	for _, s := range segments {
+		right := minTime(s.End, reportEnd)
+		if right.After(s.Start) {
+			addTotal(&r.ClassifiedCoverageTotals, s.State, right.Sub(s.Start).Seconds())
+		}
+	}
 	if first < 0 {
 		return r
 	}
-	r.Start = segments[first].Start
 	effectiveEnd := reportEnd
-	if autoEnd > 0 && reportEnd.Sub(segments[last].End) >= autoEnd {
+	r.Start = segments[first].Start
+	if last >= 0 && autoEnd > 0 && reportEnd.Sub(segments[last].End) >= autoEnd {
 		effectiveEnd = segments[last].End
 		r.AutoEnded = true
 	}
@@ -189,17 +195,20 @@ func Calculate(segments []model.Segment, reportEnd time.Time, autoEnd time.Durat
 		if !right.After(left) {
 			continue
 		}
-		d := right.Sub(left).Seconds()
-		switch s.State {
-		case model.Working:
-			r.Totals.WorkingSeconds += d
-		case model.Break:
-			r.Totals.BreakSeconds += d
-		default:
-			r.Totals.UntrackedSeconds += d
-		}
+		addTotal(&r.Totals, s.State, right.Sub(left).Seconds())
 	}
 	return r
+}
+
+func addTotal(totals *model.Totals, state model.WorkState, seconds float64) {
+	switch state {
+	case model.Working:
+		totals.WorkingSeconds += seconds
+	case model.Break:
+		totals.BreakSeconds += seconds
+	default:
+		totals.UntrackedSeconds += seconds
+	}
 }
 
 func mergeAFK(in []model.AFKEvent, freshness time.Duration) []model.AFKEvent {

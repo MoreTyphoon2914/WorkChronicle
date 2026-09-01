@@ -30,6 +30,7 @@ import (
 type commandOptions struct {
 	configPath string
 	json       bool
+	jsonV2     bool
 	tray       bool
 }
 
@@ -54,11 +55,17 @@ func parseCommand(args []string, stderr io.Writer) (string, commandOptions, erro
 	if cmd == "status" || cmd == "today" || cmd == "week" || cmd == "doctor" {
 		fs.BoolVar(&o.json, "json", false, "emit JSON")
 	}
+	if cmd == "week" {
+		fs.BoolVar(&o.jsonV2, "json-v2", false, "emit the versioned weekly summary JSON object")
+	}
 	if err := fs.Parse(args[1:]); err != nil {
 		return "", o, err
 	}
 	if fs.NArg() != 0 {
 		return "", o, fmt.Errorf("unexpected arguments: %s", strings.Join(fs.Args(), " "))
+	}
+	if o.json && o.jsonV2 {
+		return "", o, fmt.Errorf("--json and --json-v2 are mutually exclusive")
 	}
 	return cmd, o, nil
 }
@@ -82,7 +89,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	case "status", "today":
 		return runDay(ctx, cfg, cmd, opt.json, stdout, stderr)
 	case "week":
-		return runWeek(ctx, cfg, opt.json, stdout, stderr)
+		return runWeek(ctx, cfg, opt.json, opt.jsonV2, stdout, stderr)
 	case "doctor":
 		return runDoctor(ctx, cfg, opt.json, stdout, stderr)
 	case "install":
@@ -182,62 +189,75 @@ func runDay(ctx context.Context, cfg config.Config, cmd string, asJSON bool, std
 	return 0
 }
 
-func currentSegment(r model.DayReport) *model.Segment {
-	if len(r.Timeline) > 0 {
-		return &r.Timeline[len(r.Timeline)-1]
-	}
-	return nil
-}
-
 func printStatus(w io.Writer, cfg config.Config, r model.DayReport) {
 	status := reporting.StatusFromDay(cfg, r, time.Now())
 	fmt.Fprintln(w, "WORKCHRONICLE STATUS")
 	fmt.Fprintln(w, "==================")
-	fmt.Fprintln(w, "State:     ", r.CurrentState)
-	if s := currentSegment(r); s != nil {
-		fmt.Fprintf(w, "Location:   %s (%s)\n", s.Location, s.LocationEvidence)
-		fmt.Fprintf(w, "Foreground: %s", empty(s.ForegroundApp, "unavailable"))
-		if s.ForegroundTitle != "" {
-			fmt.Fprintf(w, " — %s", s.ForegroundTitle)
+	fmt.Fprintln(w, "State:     ", status.WorkState)
+	fmt.Fprintf(w, "Location:   %s (%s)\n", status.Location, status.LocationEvidence)
+	fmt.Fprintln(w, "Foreground:", empty(status.Foreground.Executable, "unavailable"))
+	fmt.Fprintln(w, "Passive evidence:")
+	if len(status.PassiveDetectorEvidence) == 0 {
+		fmt.Fprintln(w, "  none available")
+	} else {
+		ids := make([]string, 0, len(status.PassiveDetectorEvidence))
+		for id := range status.PassiveDetectorEvidence {
+			ids = append(ids, id)
 		}
-		fmt.Fprintln(w)
-		fmt.Fprintln(w, "Passive evidence:")
-		if len(s.PassiveEvidence) == 0 {
-			fmt.Fprintln(w, "  none available")
-		} else {
-			ids := make([]string, 0, len(s.PassiveEvidence))
-			for id := range s.PassiveEvidence {
-				ids = append(ids, id)
-			}
-			sort.Strings(ids)
-			for _, id := range ids {
-				o := s.PassiveEvidence[id]
-				fmt.Fprintf(w, "  %s — %s (available=%t, passive-work=%t)\n", id, o.State, o.Available, o.PassiveWork)
-			}
-			fmt.Fprintln(w, "Health:     ", s.Health)
+		sort.Strings(ids)
+		for _, id := range ids {
+			o := status.PassiveDetectorEvidence[id]
+			fmt.Fprintf(w, "  %s — %s (available=%t, passive-work=%t)\n", id, o.State, o.Available, o.PassiveWork)
 		}
 	}
+	fmt.Fprintln(w, "Health:     ", status.TrackerHealth)
 	printTotals(w, r.Totals)
-	remaining := status.RemainingSeconds
-	fmt.Fprintln(w, "Remaining:  ", duration(remaining))
-	fmt.Fprintf(w, "Finish est: %s (excludes future breaks)\n", time.Now().Add(time.Duration(remaining*float64(time.Second))).Format("15:04"))
+	fmt.Fprintln(w, "Evaluation: ", status.WorkEvaluation.Band)
+	fmt.Fprintln(w, "Remaining:  ", duration(status.RemainingSeconds))
+	if status.EstimatedFinish != nil {
+		fmt.Fprintf(w, "Finish est: %s (assumes no additional breaks)\n", status.EstimatedFinish.In(mustLocation(cfg)).Format("15:04"))
+	} else {
+		fmt.Fprintln(w, "Finish est: —")
+	}
 }
 func printToday(w io.Writer, r model.DayReport, cfg config.Config) {
 	fmt.Fprintln(w, "TODAY", r.Date)
+	fmt.Fprintln(w, "First work: ", reportTime(r.FirstWorkAt, cfg))
+	fmt.Fprintln(w, "Last work:  ", reportTime(r.LastWorkAt, cfg))
+	fmt.Fprintln(w, "Report end: ", r.ReportEnd.In(mustLocation(cfg)).Format("15:04"))
 	printTotals(w, r.Totals)
+	fmt.Fprintln(w, "Evaluation: ", r.WorkBand)
+	fmt.Fprintln(w, "Target:     ", duration(r.StandardTargetSeconds))
+	fmt.Fprintln(w, "Remaining:  ", duration(r.RemainingTargetSeconds))
+	fmt.Fprintln(w, "Overtime:   ", duration(r.OvertimeSeconds))
+	if r.Live {
+		fmt.Fprintln(w, "Current:    ", r.CurrentState)
+		if r.EstimatedFinish != nil {
+			fmt.Fprintf(w, "Finish est: %s (assumes no additional breaks)\n", r.EstimatedFinish.In(mustLocation(cfg)).Format("15:04"))
+		} else {
+			fmt.Fprintln(w, "Finish est: —")
+		}
+	} else {
+		fmt.Fprintln(w, "Final:      ", r.FinalState)
+	}
 	if r.AutoEnded {
 		fmt.Fprintln(w, "Auto-ended: ", r.End.In(mustLocation(cfg)).Format("15:04"))
 	}
 	fmt.Fprintln(w, "\nTIMELINE")
 	for _, s := range r.Timeline {
-		if !r.Start.IsZero() && s.End.After(r.Start) {
-			fmt.Fprintf(w, "%s-%s  %-9s %-7s %-18s", s.Start.In(mustLocation(cfg)).Format("15:04"), s.End.In(mustLocation(cfg)).Format("15:04"), s.State, s.Location, empty(s.ForegroundApp, "—"))
-			if o, ok := s.PassiveEvidence["vlc"]; ok {
-				fmt.Fprintf(w, "  VLC:%s", o.State)
-			}
-			fmt.Fprintln(w)
+		fmt.Fprintf(w, "%s-%s  %-9s %-7s %-18s", s.Start.In(mustLocation(cfg)).Format("15:04"), s.End.In(mustLocation(cfg)).Format("15:04"), s.State, s.Location, empty(s.ForegroundApp, "—"))
+		if o, ok := s.PassiveEvidence["vlc"]; ok {
+			fmt.Fprintf(w, "  VLC:%s", o.State)
 		}
+		fmt.Fprintln(w)
 	}
+}
+
+func reportTime(value *time.Time, cfg config.Config) string {
+	if value == nil {
+		return "—"
+	}
+	return value.In(mustLocation(cfg)).Format("15:04")
 }
 func printTotals(w io.Writer, t model.Totals) {
 	fmt.Fprintln(w, "Working:    ", duration(t.WorkingSeconds))
@@ -245,23 +265,62 @@ func printTotals(w io.Writer, t model.Totals) {
 	fmt.Fprintln(w, "Untracked:  ", duration(t.UntrackedSeconds))
 }
 
-func runWeek(ctx context.Context, cfg config.Config, asJSON bool, stdout, stderr io.Writer) int {
-	rs, err := reporting.New(cfg).Week(ctx, time.Now())
+func runWeek(ctx context.Context, cfg config.Config, asJSON, asJSONV2 bool, stdout, stderr io.Writer) int {
+	r, err := reporting.New(cfg).WeekReport(ctx, time.Now())
 	if err != nil {
 		fmt.Fprintln(stderr, "Weekly report failed:", err)
 		return 2
 	}
 	if asJSON {
-		return writeJSON(stdout, rs)
+		// Preserve the established top-level JSON array contract. The richer
+		// WeekReport model drives human presentation and future versioned APIs.
+		return writeJSON(stdout, r.Days)
 	}
-	fmt.Fprintln(stdout, "WEEK")
-	for _, r := range rs {
-		fmt.Fprintf(stdout, "%s  work %s  break %s  untracked %s\n", r.Date, duration(r.Totals.WorkingSeconds), duration(r.Totals.BreakSeconds), duration(r.Totals.UntrackedSeconds))
-		for _, u := range r.Usage {
-			fmt.Fprintf(stdout, "  %-18s %-30s W:%s B:%s U:%s\n", u.Executable, u.Title, duration(u.Durations.Working), duration(u.Durations.Break), duration(u.Durations.Untracked))
+	if asJSONV2 {
+		return writeJSON(stdout, r)
+	}
+	printWeek(stdout, r, cfg)
+	return 0
+}
+
+func printWeek(stdout io.Writer, r model.WeekReport, cfg config.Config) {
+	fmt.Fprintf(stdout, "WEEK %s to %s\n", r.PeriodStart.In(mustLocation(cfg)).Format("2006-01-02"), r.PeriodEnd.In(mustLocation(cfg)).Format("2006-01-02"))
+	for _, day := range r.Days {
+		fmt.Fprintf(stdout, "%s  work %s  break %s  untracked %s\n", day.Date, duration(day.Totals.WorkingSeconds), duration(day.Totals.BreakSeconds), duration(day.Totals.UntrackedSeconds))
+		for _, u := range usageByExecutable(day.Usage) {
+			fmt.Fprintf(stdout, "  %-18s W:%s B:%s U:%s\n", u.Executable, duration(u.Durations.Working), duration(u.Durations.Break), duration(u.Durations.Untracked))
 		}
 	}
-	return 0
+	fmt.Fprintln(stdout, "Totals:")
+	printTotals(stdout, r.Totals)
+	fmt.Fprintf(stdout, "Average work: %s across %d elapsed workday(s)\n", duration(r.AverageWorkingSeconds), r.AverageDenominator)
+	fmt.Fprintln(stdout, "Evaluation:  ", r.WorkEvaluation.Band)
+}
+
+func usageByExecutable(usage []model.Usage) []model.Usage {
+	byExecutable := make(map[string]*model.Usage)
+	for _, entry := range usage {
+		key := strings.ToLower(strings.TrimSpace(entry.Executable))
+		if key == "" {
+			continue
+		}
+		total := byExecutable[key]
+		if total == nil {
+			total = &model.Usage{Executable: entry.Executable}
+			byExecutable[key] = total
+		}
+		total.Durations.Working += entry.Durations.Working
+		total.Durations.Break += entry.Durations.Break
+		total.Durations.Untracked += entry.Durations.Untracked
+	}
+	out := make([]model.Usage, 0, len(byExecutable))
+	for _, entry := range byExecutable {
+		out = append(out, *entry)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return strings.ToLower(out[i].Executable) < strings.ToLower(out[j].Executable)
+	})
+	return out
 }
 
 type doctorReport struct {

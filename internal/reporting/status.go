@@ -19,8 +19,8 @@ func (s *Service) Status(ctx context.Context, now time.Time) (model.StatusReport
 }
 
 // StatusFromDay projects a classified daily report into current status.
-func StatusFromDay(cfg config.Config, report model.DayReport, now time.Time) model.StatusReport {
-	remaining := max(0, cfg.DailyTarget().Seconds()-report.Totals.WorkingSeconds)
+func StatusFromDay(_ config.Config, report model.DayReport, now time.Time) model.StatusReport {
+	remaining := max(0, report.WorkEvaluation.StandardTargetRemainingSeconds)
 	status := model.StatusReport{
 		WorkState:               report.CurrentState,
 		Location:                model.Remote,
@@ -30,8 +30,11 @@ func StatusFromDay(cfg config.Config, report model.DayReport, now time.Time) mod
 		Totals:                  report.Totals,
 		WorkEvaluation:          report.WorkEvaluation,
 		RemainingSeconds:        remaining,
-		EstimatedFinish:         now.Add(time.Duration(remaining * float64(time.Second))),
-		EstimateNote:            "excludes future breaks",
+	}
+	if remaining > 0 {
+		finish := now.Add(time.Duration(remaining * float64(time.Second)))
+		status.EstimatedFinish = &finish
+		status.EstimateNote = "assumes no additional breaks"
 	}
 	if len(report.Timeline) == 0 {
 		return status

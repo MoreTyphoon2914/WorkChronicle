@@ -73,8 +73,6 @@ func MapStatus(status model.StatusReport) ViewModel {
 	foreground := strings.TrimSpace(status.Foreground.Executable)
 	if foreground == "" {
 		foreground = "unavailable"
-	} else if title := strings.TrimSpace(status.Foreground.Title); title != "" {
-		foreground += " — " + title
 	}
 	health := string(status.TrackerHealth)
 	if health == "" {

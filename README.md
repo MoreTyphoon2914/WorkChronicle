@@ -26,8 +26,13 @@ go build -o .\bin\worktracker.exe .\cmd\worktracker
 .\bin\worktracker.exe status --config .\config.json
 .\bin\worktracker.exe today --config .\config.json
 .\bin\worktracker.exe week --config .\config.json --json
+.\bin\worktracker.exe week --config .\config.json --json-v2
 .\bin\worktracker.exe run --config .\config.json
 ```
+
+`week --json` retains the original top-level day array for compatibility.
+`week --json-v2` returns the versioned weekly summary object with period totals,
+the average denominator, weekly evaluation, and the same detailed daily data.
 
 On Windows, add `--tray` to the existing collector command to enable the
 optional system tray presentation in the same process:

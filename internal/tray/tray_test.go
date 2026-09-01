@@ -27,7 +27,7 @@ func TestStatusMappingToTrayStates(t *testing.T) {
 func TestStatusMappingIncludesPresentationFields(t *testing.T) {
 	status := model.StatusReport{
 		WorkState: model.Working, Location: model.Remote, LocationEvidence: model.Confirmed,
-		Foreground: model.ForegroundStatus{Executable: "firefox.exe", Title: "Documentation"},
+		Foreground: model.ForegroundStatus{Executable: "firefox.exe", Title: "https://example.test/?token=do-not-display"},
 		PassiveDetectorEvidence: map[string]model.PassiveEvidence{
 			"vlc":               {Detector: "vlc", State: "paused", Available: true},
 			"browser:firefox:7": {Detector: "browser", State: "playing", Available: true, PassiveWork: true},
@@ -43,6 +43,9 @@ func TestStatusMappingIncludesPresentationFields(t *testing.T) {
 	}
 	if view.Evaluation != "STANDARD" || !strings.Contains(view.Foreground, "firefox.exe") {
 		t.Fatalf("evaluation/foreground missing: %#v", view)
+	}
+	if strings.Contains(view.Foreground, "token=") || view.Foreground != "firefox.exe" {
+		t.Fatalf("tray exposed raw foreground title: %q", view.Foreground)
 	}
 	if !strings.Contains(view.PassiveEvidence, "browser:firefox:7: playing") || !strings.Contains(view.PassiveEvidence, "vlc: paused") {
 		t.Fatalf("passive summary missing independent evidence: %q", view.PassiveEvidence)
