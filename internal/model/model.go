@@ -63,10 +63,11 @@ type PassiveEvidence struct {
 }
 
 type WindowEvent struct {
-	Start time.Time `json:"start"`
-	End   time.Time `json:"end"`
-	App   string    `json:"app"`
-	Title string    `json:"title"`
+	Start  time.Time `json:"start"`
+	End    time.Time `json:"end"`
+	App    string    `json:"app"`
+	Title  string    `json:"title"`
+	Locked bool      `json:"locked,omitempty"`
 }
 
 type AFKEvent struct {

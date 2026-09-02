@@ -55,18 +55,23 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	state := s.store.Snapshot()
+	acquisition := acquisitionHealth(state.Acquisition, time.Now(), s.config.AgentStale)
 	status := "degraded"
 	agentConnected := false
 	if !state.LastIngest.IsZero() && time.Since(state.LastIngest) <= s.config.AgentStale {
-		status = "healthy"
 		agentConnected = true
+		if acquisitionHealthy(acquisition) {
+			status = "healthy"
+		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"status": status, "agent_connected": agentConnected, "last_ingest": state.LastIngest, "persistence": "available",
-		"browsers": browserHealth(state.Browser, time.Now(), s.config.BrowserFreshness),
+		"browsers":         browserHealth(state.Browser, time.Now(), s.config.BrowserFreshness),
+		"host_acquisition": acquisition,
 		"observation_counts": map[string]int{
 			"windows": len(state.Windows), "afk": len(state.AFK), "stored_context": len(state.StoredContext),
-			"host_context": len(state.HostContext), "browser": len(state.Browser),
+			"host_context": len(state.HostContext), "browser": len(state.Browser), "shadow_windows": len(state.ShadowWindows),
+			"shadow_afk": len(state.ShadowAFK), "native_sessions": len(state.Sessions),
 		},
 	})
 }
