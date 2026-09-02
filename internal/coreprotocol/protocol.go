@@ -49,13 +49,19 @@ type SourceHealth struct {
 }
 
 type ParityComparison struct {
-	ComparedAt       time.Time `json:"compared_at"`
-	ToleranceSeconds float64   `json:"tolerance_seconds"`
-	ForegroundMatch  bool      `json:"foreground_match"`
-	AFKMatch         bool      `json:"afk_match"`
-	SessionMatch     bool      `json:"session_match"`
-	Comparable       bool      `json:"comparable"`
-	Summary          string    `json:"summary,omitempty"`
+	ComparedAt                       time.Time  `json:"compared_at"`
+	ToleranceSeconds                 float64    `json:"tolerance_seconds"`
+	ForegroundMatch                  bool       `json:"foreground_match"`
+	AFKMatch                         bool       `json:"afk_match"`
+	SessionMatch                     bool       `json:"session_match"`
+	Comparable                       bool       `json:"comparable"`
+	ActivityWatchAFKEventStart       *time.Time `json:"activitywatch_afk_event_start,omitempty"`
+	ActivityWatchAFKInferredAt       *time.Time `json:"activitywatch_afk_inferred_at,omitempty"`
+	ActivityWatchAFKFirstObservedAt  *time.Time `json:"activitywatch_afk_first_observed_at,omitempty"`
+	NativeAFKTransitionAt            *time.Time `json:"native_afk_transition_at,omitempty"`
+	AFKSemanticDeltaSeconds          *float64   `json:"afk_semantic_delta_seconds,omitempty"`
+	ActivityWatchPublicationDelaySec *float64   `json:"activitywatch_publication_delay_seconds,omitempty"`
+	Summary                          string     `json:"summary,omitempty"`
 }
 
 type AcquisitionDiagnostics struct {

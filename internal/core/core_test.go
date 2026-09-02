@@ -228,6 +228,7 @@ func TestShadowObservationsPersistButNeverInfluenceClassification(t *testing.T) 
 	store, _ := OpenStore(config.DataDir, config.Retention)
 	now := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
 	start := now.Add(-10 * time.Minute)
+	semanticMismatch := 999.0
 	batch := coreprotocol.Batch{
 		SchemaVersion: 1, AgentID: "host", SentAt: now,
 		Windows:       []coreprotocol.WindowObservation{{Start: start, End: now, Executable: "Code.exe", Source: coreprotocol.SourceActivityWatch}},
@@ -235,7 +236,9 @@ func TestShadowObservationsPersistButNeverInfluenceClassification(t *testing.T) 
 		ShadowWindows: []coreprotocol.WindowObservation{{Start: start, End: now, Executable: "LockApp.exe", Locked: true, Source: coreprotocol.SourceNativeWindows}},
 		ShadowAFK:     []coreprotocol.AFKObservation{{Start: start, End: now, Status: "afk", Source: coreprotocol.SourceNativeWindows}},
 		Sessions:      []coreprotocol.SessionObservation{{ObservedAt: now, Locked: true, Source: coreprotocol.SourceNativeWindows}},
-		Acquisition:   &coreprotocol.AcquisitionDiagnostics{Mode: "shadow"},
+		Acquisition: &coreprotocol.AcquisitionDiagnostics{Mode: "shadow", Comparison: &coreprotocol.ParityComparison{
+			Comparable: true, AFKMatch: false, AFKSemanticDeltaSeconds: &semanticMismatch,
+		}},
 	}
 	if err := batch.NormalizeAndValidate(); err != nil {
 		t.Fatal(err)

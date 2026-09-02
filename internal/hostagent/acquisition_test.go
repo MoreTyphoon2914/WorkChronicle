@@ -45,7 +45,7 @@ func TestNativeLoopKeepsCadenceIndependently(t *testing.T) {
 	}
 	cfg := config.Config{HostAcquisition: config.HostAcquisition{Mode: "shadow", NativePollSeconds: 0.05, NativeAFKThresholdSeconds: 60, ParityToleranceSeconds: 5}}
 	agent := &Agent{Config: cfg, Core: coreclient.New(server.URL, "0123456789abcdef", time.Second), Native: w, Logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
-	diagnostics := newAcquisitionState("shadow", 5*time.Second, nil, nil)
+	diagnostics := newAcquisitionState("shadow", 5*time.Second, time.Minute, nil, nil)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	agent.startNativeLoop(ctx, "host", "shadow", diagnostics)
@@ -69,7 +69,7 @@ func TestNativeLoopKeepsCadenceIndependently(t *testing.T) {
 
 func TestAcquisitionStateRetainsIndependentFailureHealth(t *testing.T) {
 	now := time.Now().UTC()
-	state := newAcquisitionState("shadow", 5*time.Second, []string{"lockapp.exe"}, nil)
+	state := newAcquisitionState("shadow", 5*time.Second, time.Minute, []string{"lockapp.exe"}, nil)
 	state.updateActivityWatch([]coreprotocol.WindowObservation{{Start: now, End: now, Executable: "Code.exe"}}, []coreprotocol.AFKObservation{{Start: now, End: now, Status: "not-afk"}}, nil, now)
 	state.updateNative(nativewatcher.Result{
 		Window:     &coreprotocol.WindowObservation{Start: now, End: now, Executable: "Code.exe", Source: coreprotocol.SourceNativeWindows},

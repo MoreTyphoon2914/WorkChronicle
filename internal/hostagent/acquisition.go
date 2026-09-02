@@ -12,14 +12,17 @@ type acquisitionState struct {
 	mu                   sync.Mutex
 	diagnostics          coreprotocol.AcquisitionDiagnostics
 	tolerance            time.Duration
+	afkThreshold         time.Duration
 	lockApps, lockTitles []string
 	window               *coreprotocol.WindowObservation
 	afk                  *coreprotocol.AFKObservation
+	awAFKObservedAt      *time.Time
+	awAFKKey             string
 	native               nativewatcher.Result
 }
 
-func newAcquisitionState(mode string, tolerance time.Duration, lockApps, lockTitles []string) *acquisitionState {
-	state := &acquisitionState{tolerance: tolerance, lockApps: append([]string(nil), lockApps...), lockTitles: append([]string(nil), lockTitles...)}
+func newAcquisitionState(mode string, tolerance, afkThreshold time.Duration, lockApps, lockTitles []string) *acquisitionState {
+	state := &acquisitionState{tolerance: tolerance, afkThreshold: afkThreshold, lockApps: append([]string(nil), lockApps...), lockTitles: append([]string(nil), lockTitles...)}
 	state.diagnostics.Mode = mode
 	state.diagnostics.ActivityWatch.Enabled = usesActivityWatch(mode)
 	state.diagnostics.NativeForeground.Enabled = mode == "shadow" || mode == "native"
@@ -47,6 +50,12 @@ func (s *acquisitionState) updateActivityWatch(windows []coreprotocol.WindowObse
 		if value := newestAFK(afk); value != nil {
 			copy := *value
 			s.afk = &copy
+			key := copy.Start.UTC().Format(time.RFC3339Nano) + "\x00" + copy.Status
+			if key != s.awAFKKey {
+				observedAt := at.UTC()
+				s.awAFKObservedAt = &observedAt
+				s.awAFKKey = key
+			}
 		}
 	}
 	s.compare(at)
@@ -75,7 +84,7 @@ func (s *acquisitionState) compare(at time.Time) {
 	if s.afk != nil {
 		afk = append(afk, *s.afk)
 	}
-	s.diagnostics.Comparison = compareSources(windows, afk, s.native, at, s.tolerance, s.lockApps, s.lockTitles)
+	s.diagnostics.Comparison = compareSources(windows, afk, s.native, s.awAFKObservedAt, at, s.tolerance, s.afkThreshold, s.lockApps, s.lockTitles)
 }
 
 func (s *acquisitionState) snapshot() *coreprotocol.AcquisitionDiagnostics {

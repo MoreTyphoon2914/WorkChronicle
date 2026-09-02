@@ -59,7 +59,7 @@ func (a *Agent) Run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	diagnostics := newAcquisitionState(mode, a.Config.ParityTolerance(), a.Config.LockApps, a.Config.LockTitleContains)
+	diagnostics := newAcquisitionState(mode, a.Config.ParityTolerance(), a.Config.NativeAFKThreshold(), a.Config.LockApps, a.Config.LockTitleContains)
 
 	var buckets Buckets
 	if usesActivityWatch(mode) {
