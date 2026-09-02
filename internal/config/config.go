@@ -30,6 +30,13 @@ type BrowserIngest struct {
 	MaxBodyBytes int64 `json:"max_body_bytes"`
 }
 
+type HostAcquisition struct {
+	Mode                      string  `json:"mode"`
+	NativePollSeconds         float64 `json:"native_poll_seconds"`
+	NativeAFKThresholdSeconds float64 `json:"native_afk_threshold_seconds"`
+	ParityToleranceSeconds    float64 `json:"parity_tolerance_seconds"`
+}
+
 type WorkTargets struct {
 	DailyTargetHours          float64                 `json:"daily_target_hours"`
 	DailyStandardMinimumHours float64                 `json:"daily_standard_minimum_hours"`
@@ -38,30 +45,31 @@ type WorkTargets struct {
 }
 
 type Config struct {
-	Server                string        `json:"server"`
-	WindowBucket          string        `json:"window_bucket"`
-	AFKBucket             string        `json:"afk_bucket"`
-	Timezone              string        `json:"timezone"`
-	DayBoundary           string        `json:"day_boundary"`
-	AFKGraceMinutes       float64       `json:"afk_grace_minutes"`
-	AutoEndAfterMinutes   float64       `json:"auto_end_after_minutes"`
-	StatusStaleSeconds    float64       `json:"status_stale_seconds"`
-	ContextPollSeconds    float64       `json:"context_poll_seconds"`
-	NetworkRefreshSeconds float64       `json:"network_refresh_seconds"`
-	NetworkStaleSeconds   float64       `json:"network_stale_seconds"`
-	HTTPTimeoutSeconds    float64       `json:"http_timeout_seconds"`
-	RetryMaxSeconds       float64       `json:"retry_max_seconds"`
-	ContextQueueSize      int           `json:"context_queue_size"`
-	TaskName              string        `json:"task_name"`
-	LockApps              []string      `json:"lock_apps"`
-	LockTitleContains     []string      `json:"lock_title_contains"`
-	HomeGatewayMACs       []string      `json:"home_gateway_macs"`
-	OfficeGatewayMACs     []string      `json:"office_gateway_macs"`
-	VLC                   VLC           `json:"vlc"`
-	Logging               Logging       `json:"logging"`
-	BrowserIngest         BrowserIngest `json:"browser_ingest"`
-	WorkTargets           WorkTargets   `json:"work_targets"`
-	ConfigPath            string        `json:"-"`
+	Server                string          `json:"server"`
+	WindowBucket          string          `json:"window_bucket"`
+	AFKBucket             string          `json:"afk_bucket"`
+	Timezone              string          `json:"timezone"`
+	DayBoundary           string          `json:"day_boundary"`
+	AFKGraceMinutes       float64         `json:"afk_grace_minutes"`
+	AutoEndAfterMinutes   float64         `json:"auto_end_after_minutes"`
+	StatusStaleSeconds    float64         `json:"status_stale_seconds"`
+	ContextPollSeconds    float64         `json:"context_poll_seconds"`
+	NetworkRefreshSeconds float64         `json:"network_refresh_seconds"`
+	NetworkStaleSeconds   float64         `json:"network_stale_seconds"`
+	HTTPTimeoutSeconds    float64         `json:"http_timeout_seconds"`
+	RetryMaxSeconds       float64         `json:"retry_max_seconds"`
+	ContextQueueSize      int             `json:"context_queue_size"`
+	TaskName              string          `json:"task_name"`
+	LockApps              []string        `json:"lock_apps"`
+	LockTitleContains     []string        `json:"lock_title_contains"`
+	HomeGatewayMACs       []string        `json:"home_gateway_macs"`
+	OfficeGatewayMACs     []string        `json:"office_gateway_macs"`
+	VLC                   VLC             `json:"vlc"`
+	Logging               Logging         `json:"logging"`
+	BrowserIngest         BrowserIngest   `json:"browser_ingest"`
+	HostAcquisition       HostAcquisition `json:"host_acquisition"`
+	WorkTargets           WorkTargets     `json:"work_targets"`
+	ConfigPath            string          `json:"-"`
 }
 
 func defaults() Config {
@@ -72,8 +80,9 @@ func defaults() Config {
 		NetworkStaleSeconds: 180, HTTPTimeoutSeconds: 10, RetryMaxSeconds: 30,
 		ContextQueueSize: 10000, TaskName: "WorkTracker",
 		LockApps: []string{"lockapp.exe"}, LockTitleContains: []string{"windows default lock screen"},
-		Logging:       Logging{Level: "info", File: "logs/worktracker.log", MaxBytes: 5 << 20, MaxBackups: 3},
-		BrowserIngest: BrowserIngest{Enabled: true, Port: 5601, MaxBodyBytes: 64 << 10},
+		Logging:         Logging{Level: "info", File: "logs/worktracker.log", MaxBytes: 5 << 20, MaxBackups: 3},
+		BrowserIngest:   BrowserIngest{Enabled: true, Port: 5601, MaxBodyBytes: 64 << 10},
+		HostAcquisition: HostAcquisition{Mode: "activitywatch", NativePollSeconds: 2, NativeAFKThresholdSeconds: 180, ParityToleranceSeconds: 5},
 		WorkTargets: WorkTargets{
 			DailyTargetHours: 8, DailyStandardMinimumHours: 6, WorkdaysPerWeek: 5,
 			OvertimeRule: workpolicy.OvertimeBeyondStandardTarget,
@@ -145,10 +154,33 @@ func (c Config) Validate() error {
 	if c.BrowserIngest.MaxBodyBytes <= 0 {
 		problems = append(problems, "browser_ingest.max_body_bytes must be positive")
 	}
+	mode := strings.ToLower(strings.TrimSpace(c.HostAcquisition.Mode))
+	if mode != "activitywatch" && mode != "shadow" && mode != "native" {
+		problems = append(problems, "host_acquisition.mode must be activitywatch, shadow, or native")
+	}
+	if c.HostAcquisition.NativePollSeconds <= 0 || c.HostAcquisition.NativeAFKThresholdSeconds <= 0 || c.HostAcquisition.ParityToleranceSeconds < 0 {
+		problems = append(problems, "host_acquisition timing values are invalid")
+	}
 	if len(problems) > 0 {
 		return errors.New(strings.Join(problems, "; "))
 	}
 	return nil
+}
+
+func (c Config) AcquisitionMode() string {
+	return strings.ToLower(strings.TrimSpace(c.HostAcquisition.Mode))
+}
+
+func (c Config) NativePollInterval() time.Duration {
+	return time.Duration(c.HostAcquisition.NativePollSeconds * float64(time.Second))
+}
+
+func (c Config) NativeAFKThreshold() time.Duration {
+	return time.Duration(c.HostAcquisition.NativeAFKThresholdSeconds * float64(time.Second))
+}
+
+func (c Config) ParityTolerance() time.Duration {
+	return time.Duration(c.HostAcquisition.ParityToleranceSeconds * float64(time.Second))
 }
 
 func (c Config) Location() (*time.Location, error) { return time.LoadLocation(c.Timezone) }

@@ -37,14 +37,35 @@ the average denominator, weekly evaluation, and the same detailed daily data.
 ## Docker Core demo
 
 The authoritative WorkChronicle classification and reporting application can
-run in Docker. A small Windows Host Agent remains native because ActivityWatch,
-interactive foreground/lock state, physical Wi-Fi, VLC, and the browser
+run in Docker. A small Windows Host Agent remains native because interactive
+foreground/input/session state, physical Wi-Fi, VLC, ActivityWatch compatibility, and the browser
 extension's loopback receiver belong to the signed-in Windows session.
 
 The Agent sends normalized facts to Core. It does not assign
 `WORKING`/`BREAK`/`UNTRACKED` and does not evaluate work targets. Core persists
 the facts under `/data`, derives evidence, classifies the timeline, evaluates
 targets, and exposes reports.
+
+### Host acquisition modes
+
+`host_acquisition.mode` controls only where normalized foreground and AFK facts
+come from. It defaults to `activitywatch`:
+
+- `activitywatch`: existing production behavior; native watchers are disabled.
+- `shadow`: ActivityWatch remains authoritative while native foreground, input,
+  and session observations are persisted in separate diagnostic streams.
+- `native`: native foreground/input/session facts become authoritative and the
+  Agent does not require ActivityWatch connectivity. ActivityWatch support and
+  its historical data remain available for later import and troubleshooting.
+
+Shadow observations never enter the classifier's window or AFK inputs. The
+dashboard's **Host acquisition** section shows component freshness and a
+privacy-safe parity summary without window titles. Comparison uses normalized
+executable, AFK, and lock state, accepting observations through
+`parity_tolerance_seconds`; it intentionally does not demand identical sampling
+boundaries. `native_afk_threshold_seconds` should initially match the installed
+ActivityWatch AFK watcher's idle threshold. Native mode is not the default and
+must not be promoted until live parity validation succeeds.
 
 From Git Bash, create the local shared secret and build/start Core:
 
@@ -98,7 +119,8 @@ The current networking path is:
 
 ```text
 Browser extensions -> 127.0.0.1:5601 -> Windows Host Agent
-ActivityWatch / VLC / Windows session sources -> Windows Host Agent
+ActivityWatch and/or native Windows foreground/input/session -> Windows Host Agent
+Physical network / VLC -> Windows Host Agent
 Windows Host Agent -> authenticated HTTP -> 127.0.0.1:8080
                    -> Docker published port -> Core container port 8080
 Dashboard / curl -> 127.0.0.1:8080 -> Docker Core

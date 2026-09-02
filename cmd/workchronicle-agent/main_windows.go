@@ -52,7 +52,7 @@ func main() {
 	defer cancel()
 	client := coreclient.New(*coreURL, token, cfg.HTTPTimeout())
 	agent := hostagent.New(cfg, client, logger)
-	fmt.Println("WorkChronicle Host Agent running; observations are forwarded to", *coreURL)
+	fmt.Printf("WorkChronicle Host Agent running in %s acquisition mode; observations are forwarded to %s\n", cfg.AcquisitionMode(), *coreURL)
 	if err := agent.Run(ctx); err != nil && err != context.Canceled {
 		fatal("host agent stopped", err)
 	}

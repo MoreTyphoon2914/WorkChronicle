@@ -277,6 +277,9 @@ func laterEvidence(start, end, bestStart, bestEnd time.Time) bool {
 	return start.After(bestStart) || (start.Equal(bestStart) && end.After(bestEnd))
 }
 func isLocked(w model.WindowEvent, o Options) bool {
+	if w.Locked {
+		return true
+	}
 	a := strings.ToLower(w.App)
 	title := strings.ToLower(w.Title)
 	for _, x := range o.LockApps {
