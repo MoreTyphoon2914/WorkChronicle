@@ -140,6 +140,17 @@ the dashboard's Host acquisition diagnostics. `native` is an explicit cutover
 mode that can run foreground/AFK/session acquisition without ActivityWatch; it
 is deliberately not the default.
 
+On Windows, session lock state is driven primarily by
+`WTSRegisterSessionNotification` and `WM_WTSSESSION_CHANGE`. Once the Agent
+receives `WTS_SESSION_LOCK`, it remains locked until `WTS_SESSION_UNLOCK`; the
+desktop-access heuristic cannot overwrite that confirmed state. Windows does
+not expose a reliable basic WTS lock query for every startup context, so a new
+Agent that starts while unlocked reports session state as unknown until its
+first WTS notification. A positive secure-desktop access failure may
+conservatively establish a startup lock, but an accessible desktop is never
+used by itself to claim unlocked. This affects session-component health at
+startup, not foreground/AFK collection or classification policy.
+
 ### Native watcher live-validation checklist
 
 Record `/health` and `/api/v1/status` timestamps before and after each action.

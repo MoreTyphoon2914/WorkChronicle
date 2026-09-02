@@ -23,27 +23,35 @@ import (
 type Buckets struct{ Window, AFK, Context, Browser string }
 
 type Agent struct {
-	Config   config.Config
-	Core     *coreclient.Client
-	AW       *activitywatch.Client
-	Native   *nativewatcher.Watcher
-	Location *location.Detector
-	Apps     []appstate.Detector
-	Logger   *slog.Logger
+	Config      config.Config
+	Core        *coreclient.Client
+	AW          *activitywatch.Client
+	Native      *nativewatcher.Watcher
+	NativeClose func() error
+	Location    *location.Detector
+	Apps        []appstate.Detector
+	Logger      *slog.Logger
 }
 
 func New(cfg config.Config, client *coreclient.Client, logger *slog.Logger) *Agent {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	native, _ := nativewatcher.New(nativewatcher.WindowsReader{}, cfg.NativeAFKThreshold(), max(3*cfg.NativePollInterval(), 10*time.Second))
+	reader, readerErr := nativewatcher.NewWindowsReader(func(transition nativewatcher.SessionTransition) {
+		logger.Info("Windows session notification", "state", transition.State.String(), "observed_at", transition.ObservedAt)
+	})
+	if readerErr != nil && (cfg.AcquisitionMode() == "shadow" || cfg.AcquisitionMode() == "native") {
+		logger.Warn("Windows session notifications unavailable; using conservative startup fallback", "error", readerErr)
+	}
+	native, _ := nativewatcher.New(reader, cfg.NativeAFKThreshold(), max(3*cfg.NativePollInterval(), 10*time.Second))
 	return &Agent{
 		Config: cfg, Core: client,
-		AW:       activitywatch.New(cfg.Server, cfg.HTTPTimeout(), time.Duration(cfg.RetryMaxSeconds*float64(time.Second))),
-		Native:   native,
-		Location: location.New(location.PowerShellRunner{}, cfg.OfficeGatewayMACs, cfg.HomeGatewayMACs, cfg.NetworkStale()),
-		Apps:     []appstate.Detector{&appstate.VLCDetector{URL: cfg.VLC.URL, Password: cfg.VLC.Password, Client: &http.Client{Timeout: cfg.HTTPTimeout()}}},
-		Logger:   logger,
+		AW:          activitywatch.New(cfg.Server, cfg.HTTPTimeout(), time.Duration(cfg.RetryMaxSeconds*float64(time.Second))),
+		Native:      native,
+		NativeClose: reader.Close,
+		Location:    location.New(location.PowerShellRunner{}, cfg.OfficeGatewayMACs, cfg.HomeGatewayMACs, cfg.NetworkStale()),
+		Apps:        []appstate.Detector{&appstate.VLCDetector{URL: cfg.VLC.URL, Password: cfg.VLC.Password, Client: &http.Client{Timeout: cfg.HTTPTimeout()}}},
+		Logger:      logger,
 	}
 }
 
@@ -54,6 +62,9 @@ func (a *Agent) Run(ctx context.Context) error {
 	mode := a.Config.AcquisitionMode()
 	if (mode == "shadow" || mode == "native") && a.Native == nil {
 		return fmt.Errorf("native Windows acquisition is required in %s mode", mode)
+	}
+	if a.NativeClose != nil {
+		defer a.NativeClose()
 	}
 	hostname, err := os.Hostname()
 	if err != nil {

@@ -33,7 +33,27 @@ var (
 	getTickCount64            = kernel32.NewProc("GetTickCount64")
 )
 
-type WindowsReader struct{}
+type WindowsReader struct {
+	session *sessionState
+	monitor *windowsSessionMonitor
+}
+
+func NewWindowsReader(notify func(SessionTransition)) (WindowsReader, error) {
+	state := &sessionState{}
+	monitor, err := startWindowsSessionMonitor(state, notify)
+	reader := WindowsReader{session: state, monitor: monitor}
+	if err != nil {
+		return reader, err
+	}
+	return reader, nil
+}
+
+func (r WindowsReader) Close() error {
+	if r.monitor != nil {
+		return r.monitor.Close()
+	}
+	return nil
+}
 
 type lastInputInfo struct {
 	Size uint32
@@ -75,7 +95,30 @@ func (WindowsReader) IdleDuration(context.Context) (time.Duration, error) {
 	return time.Duration(delta) * time.Millisecond, nil
 }
 
-func (WindowsReader) SessionLocked(context.Context) (bool, error) {
+func (r WindowsReader) SessionLocked(context.Context) (bool, error) {
+	if r.session != nil {
+		state, _, _ := r.session.snapshot()
+		switch state {
+		case SessionLocked:
+			return true, nil
+		case SessionUnlocked:
+			return false, nil
+		}
+	}
+	locked, err := desktopSessionLocked()
+	if err != nil {
+		return false, err
+	}
+	if locked {
+		if r.session != nil {
+			r.session.fallbackLocked(time.Now())
+		}
+		return true, nil
+	}
+	return false, fmt.Errorf("Windows session state is unknown until a WTS notification or positive lock fallback")
+}
+
+func desktopSessionLocked() (bool, error) {
 	desktop, _, callErr := openInputDesktop.Call(0, 0, desktopSwitchDesktop)
 	if desktop == 0 {
 		// The signed-in user cannot open Winlogon's secure input desktop while

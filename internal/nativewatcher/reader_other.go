@@ -10,6 +10,12 @@ import (
 
 type WindowsReader struct{}
 
+func NewWindowsReader(func(SessionTransition)) (WindowsReader, error) {
+	return WindowsReader{}, fmt.Errorf("native Windows session acquisition is unavailable")
+}
+
+func (WindowsReader) Close() error { return nil }
+
 func (WindowsReader) Foreground(context.Context) (Foreground, error) {
 	return Foreground{}, fmt.Errorf("native Windows foreground acquisition is unavailable")
 }
